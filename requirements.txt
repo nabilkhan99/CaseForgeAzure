@@ -1,0 +1,17 @@
+# Azure Functions requirements
+azure-functions==1.18.0
+# Core dependencies
+fastapi==0.109.2
+uvicorn==0.27.1
+pydantic==2.6.1
+pydantic-settings==2.1.0
+
+# AI Services
+anthropic==0.18.1
+openai==1.55.3
+
+# Utils
+python-dotenv==1.0.0
+python-multipart==0.0.9
+aiohttp==3.9.3
+
