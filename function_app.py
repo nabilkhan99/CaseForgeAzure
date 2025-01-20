@@ -10,13 +10,13 @@ app = func.FunctionApp()
 async def capabilities(req: func.HttpRequest) -> func.HttpResponse:
     return await capabilities_main(req)
 
-# @app.function_name(name="generate-review")
-# @app.route(route="generate-review", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
-# async def generate_review(req: func.HttpRequest) -> func.HttpResponse:
-#     return await generate_review_main(req)
+@app.function_name(name="generate-review")
+@app.route(route="generate-review", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+async def generate_review(req: func.HttpRequest) -> func.HttpResponse:
+    return await generate_review_main(req)
 
-# @app.function_name(name="improve-review")
-# @app.route(route="improve-review", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
-# async def improve_review(req: func.HttpRequest) -> func.HttpResponse:
-#     return await improve_review_main(req)
+@app.function_name(name="improve-review")
+@app.route(route="improve-review", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+async def improve_review(req: func.HttpRequest) -> func.HttpResponse:
+    return await improve_review_main(req)
 

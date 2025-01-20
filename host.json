@@ -18,7 +18,9 @@
       "cors": {
         "allowedOrigins": [
           "http://localhost:3000",
-          "caseforge2025.azurewebsites.net"
+          "caseforge2025a.azurewebsites.net",
+          "https://caseforge2025a.azurewebsites.net",
+          "https://caseforge2025a.azurewebsites.net/api"
         ],
         "allowedMethods": ["GET", "POST", "OPTIONS"],
         "allowedHeaders": ["Content-Type", "Authorization"],
