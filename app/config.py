@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     # API Keys
     openai_api_key: str
     anthropic_api_key: str
+    azure_openai_api_key: str
     
     # URLs
     frontend_url: str = "http://localhost:3000"
@@ -15,6 +16,11 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-3-opus-20240229"
     max_tokens: int = 4000
     temperature: float = 0.7
+    
+    # Azure OpenAI Settings
+    azure_openai_endpoint: str = "https://ai-caseforge2025a060083517978.openai.azure.com"
+    azure_openai_api_version: str = "2024-07-18"
+    azure_openai_deployment: str = "gpt-4o-mini"
     
     # Application Settings
     debug: bool = False
@@ -41,8 +47,11 @@ Reflection: What will I maintain, improve or stop?
 - What should be stopped or done differently
 - Your emotional response to the case]
 
+
 Learning needs identified from this event:
 [List specific learning needs, knowledge gaps, or skills to develop based on this case]
+
+Note: Do not include the specific points like "What should be stopped or done differently" in the reflection and learning needs sections. it should be a general reflection on the case using the points above as a guide.
 
 Here is the case to review:
 {case_description}"""
@@ -207,6 +216,12 @@ Here is the case to review:
         kwargs['temperature'] = float(os.environ.get('TEMPERATURE', '0.7'))
         kwargs['debug'] = os.environ.get('DEBUG', 'false').lower() == 'true'
         kwargs['environment'] = os.environ.get('ENVIRONMENT', 'development')
+        
+        # Update initialization to include Azure settings
+        kwargs['azure_openai_api_key'] = os.environ.get('AZURE_OPENAI_API_KEY', '')
+        kwargs['azure_openai_endpoint'] = os.environ.get('AZURE_OPENAI_ENDPOINT', 'https://ai-caseforge2025a060083517978.openai.azure.com')
+        kwargs['azure_openai_api_version'] = os.environ.get('AZURE_OPENAI_API_VERSION', '2024-02-01')
+        kwargs['azure_openai_deployment'] = os.environ.get('AZURE_OPENAI_DEPLOYMENT', 'gpt-4o-mini')
         
         super().__init__(**kwargs)
 

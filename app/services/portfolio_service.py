@@ -1,7 +1,7 @@
 # app/services/portfolio_service.py
 from typing import Dict, List, Optional
 import openai
-from openai import OpenAI, AsyncOpenAI
+from openai import OpenAI, AsyncOpenAI, AzureOpenAI
 import asyncio
 from ..config import Settings, capability_content
 from ..utils.text_processing import extract_sections, generate_title
@@ -11,10 +11,10 @@ from ..models import CaseReviewResponse, CaseReviewSection
 class PortfolioService:
     def __init__(self, settings: Settings):
         self.settings = settings
-        # Use sync client for non-async operations
-        self.openai_client = OpenAI(
-            api_key=settings.openai_api_key,
-            base_url="https://api.openai.com/v1"
+        self.openai_client = AzureOpenAI(
+            azure_endpoint=settings.azure_openai_endpoint,
+            api_key=settings.azure_openai_api_key,
+            api_version=settings.azure_openai_api_version
         )
         self.capabilities = parse_capabilities(capability_content)
 
@@ -62,7 +62,7 @@ class PortfolioService:
             # Use sync client in async context
             response = await asyncio.to_thread(
                 self.openai_client.chat.completions.create,
-                model=self.settings.openai_model,
+                model=self.settings.azure_openai_deployment,
                 messages=messages,
                 max_tokens=self.settings.max_tokens,
                 temperature=self.settings.temperature
@@ -74,20 +74,7 @@ class PortfolioService:
             sections = extract_sections(review_content, selected_capabilities)
             
             # Use sync client for title generation
-            title_response = await asyncio.to_thread(
-                self.openai_client.chat.completions.create,
-                model=self.settings.openai_model,
-                messages=[{
-                    "role": "system",
-                    "content": "Generate a brief (4-6 words) medical case title."
-                }, {
-                    "role": "user",
-                    "content": f"Create a title for: {case_description}"
-                }],
-                max_tokens=50,
-                temperature=0.7
-            )
-            case_title = title_response.choices[0].message.content.strip().replace('"', '')
+            case_title = await generate_title(sections["brief_description"], self.openai_client, self.settings)
 
             return CaseReviewResponse(
                 case_title=case_title,
@@ -197,19 +184,26 @@ class PortfolioService:
                 },
                 {
                     "role": "user",
-                    "content": self.settings.IMPROVEMENT_EXAMPLE_3
-                },
-                {
-                    "role": "user",
-                    "content": self.settings.IMPROVEMENT_REQUEST_3
-                },
-                {
-                    "role": "assistant",
-                    "content": self.settings.IMPROVEMENT_RESPONSE_3
-                },
-                {
-                    "role": "user",
-                    "content": f"""Current case review:
+                    "content": f"""
+
+                    You are an AI assistant helping to improve GP portfolio entries.
+                    Your task is to enhance specific aspects of case reviews while maintaining the overall structure and other content.
+                    
+                    Guidelines:
+                    1. Only modify content specifically related to the requested improvement
+                    2. Maintain the same level of professionalism and medical accuracy
+                    3. Keep the same structure and sections (always include the same sections and ensure they are all populated)
+                    4. Ensure improvements are specific and evidence-based
+                    5. Preserve any existing good content not related to the improvement request
+                    6. For demographic corrections, ensure all pronouns and references are updated consistently throughout
+                    
+                    IMPORTANT: 
+                    1. Only modify sections specifically related to the requested improvement, other sections should be kept exactly the same
+                    2. Keep all other content exactly the same
+                    3. Maintain the same structure and section headings
+                    4. Ensure the improvements are specific and detailed
+                    
+                    Current case review:
                     {original_case}
                     
                     Requested improvement:
@@ -217,21 +211,16 @@ class PortfolioService:
                     
                     Selected capabilities to focus on:
                     {formatted_capabilities}
-                    
-                    IMPORTANT: 
-                    1. Only modify sections specifically related to the requested improvement
-                    2. Keep all other content exactly the same
-                    3. Maintain the same structure and section headings
-                    4. Ensure the improvements are specific and detailed"""
+                    """
                 }
             ]
 
             response = await asyncio.to_thread(
                 self.openai_client.chat.completions.create,
-                model=self.settings.openai_model,  # Using the same model as generate_case_review
+                model=self.settings.azure_openai_deployment,
                 messages=messages,
                 max_tokens=self.settings.max_tokens,
-                temperature=0.7
+                temperature=self.settings.temperature
             )
 
             improved_content = response.choices[0].message.content
@@ -241,9 +230,9 @@ class PortfolioService:
             
             # Only generate new title if the brief description was modified
             if "brief_description" in improvement_prompt.lower():
-                case_title = await generate_title(sections["brief_description"])
+                case_title = await generate_title(sections["brief_description"], self.openai_client, self.settings)
             else:
-                case_title = await generate_title(original_case.split("\n")[0])  # Use original title
+                case_title = await generate_title(original_case.split("\n")[0], self.openai_client, self.settings)  # Use original title
 
             return CaseReviewResponse(
                 case_title=case_title,

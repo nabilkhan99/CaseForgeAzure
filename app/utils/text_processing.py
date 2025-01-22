@@ -1,7 +1,7 @@
 # app/utils/text_processing.py
 import re
 from typing import Dict, List, Optional
-import openai
+from openai import AzureOpenAI
 from ..config import Settings
 
 def extract_sections(review_content: str, selected_capabilities: List[str]) -> Dict[str, any]:
@@ -51,25 +51,15 @@ def extract_sections(review_content: str, selected_capabilities: List[str]) -> D
     
     return sections
 
-async def generate_title(case_description: str) -> str:
+async def generate_title(case_description: str, client: AzureOpenAI, settings: Settings) -> str:
     """Generate a brief title from the case description."""
     try:
-        settings = Settings()
-        client = openai.OpenAI(api_key=settings.openai_api_key)
-        messages = [
-            {
-                "role": "system",
-                "content": "Generate a brief (4-6 words) medical case title."
-            },
-            {
-                "role": "user",
-                "content": f"Create a title for: {case_description}"
-            }
-        ]
-        
         response = client.chat.completions.create(
-            model="gpt-4",
-            messages=messages,
+            model=settings.azure_openai_deployment,
+            messages=[
+                {"role": "system", "content": "Generate a brief (4-6 words) medical case title."},
+                {"role": "user", "content": f"Create a title for: {case_description}"}
+            ],
             max_tokens=50,
             temperature=0.7
         )
