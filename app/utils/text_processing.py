@@ -2,6 +2,7 @@
 import re
 from typing import Dict, List, Optional
 from openai import AzureOpenAI
+from openai import AsyncAzureOpenAI
 from ..config import Settings
 
 def extract_sections(review_content: str, selected_capabilities: List[str]) -> Dict[str, any]:
@@ -51,10 +52,10 @@ def extract_sections(review_content: str, selected_capabilities: List[str]) -> D
     
     return sections
 
-async def generate_title(case_description: str, client: AzureOpenAI, settings: Settings) -> str:
+async def generate_title(case_description: str, client: AsyncAzureOpenAI, settings: Settings) -> str:
     """Generate a brief title from the case description."""
     try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=settings.azure_openai_deployment,
             messages=[
                 {"role": "system", "content": "Generate a brief (4-6 words) medical case title."},
@@ -64,6 +65,6 @@ async def generate_title(case_description: str, client: AzureOpenAI, settings: S
             temperature=0.7
         )
         
-        return response.choices[0].message.content.strip().replace('"', '')
+        return completion.choices[0].message.content.strip().replace('"', '')
     except Exception:
         return "Case Review"

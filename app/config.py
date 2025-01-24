@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     # AI Model Settings
     openai_model: str = "gpt-4o-mini"
     anthropic_model: str = "claude-3-opus-20240229"
-    max_tokens: int = 4000
+    max_tokens: int = 800
     temperature: float = 0.7
     
     # Azure OpenAI Settings
@@ -212,7 +212,7 @@ Here is the case to review:
         kwargs['anthropic_api_key'] = os.environ.get('ANTHROPIC_API_KEY', '')
         kwargs['frontend_url'] = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
         kwargs['openai_model'] = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
-        kwargs['max_tokens'] = int(os.environ.get('MAX_TOKENS', '4000'))
+        kwargs['max_tokens'] = int(os.environ.get('MAX_TOKENS', '800'))
         kwargs['temperature'] = float(os.environ.get('TEMPERATURE', '0.7'))
         kwargs['debug'] = os.environ.get('DEBUG', 'false').lower() == 'true'
         kwargs['environment'] = os.environ.get('ENVIRONMENT', 'development')

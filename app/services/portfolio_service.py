@@ -1,7 +1,7 @@
 # app/services/portfolio_service.py
 from typing import Dict, List, Optional
 import openai
-from openai import OpenAI, AsyncOpenAI, AzureOpenAI
+from openai import AsyncOpenAI, AsyncAzureOpenAI
 import asyncio
 from ..config import Settings, capability_content
 from ..utils.text_processing import extract_sections, generate_title
@@ -11,7 +11,7 @@ from ..models import CaseReviewResponse, CaseReviewSection
 class PortfolioService:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.openai_client = AzureOpenAI(
+        self.openai_client = AsyncAzureOpenAI(
             azure_endpoint=settings.azure_openai_endpoint,
             api_key=settings.azure_openai_api_key,
             api_version=settings.azure_openai_api_version
@@ -57,23 +57,17 @@ class PortfolioService:
                 }
             ]
 
-            
-
-            # Use sync client in async context
-            response = await asyncio.to_thread(
-                self.openai_client.chat.completions.create,
+            completion = await self.openai_client.chat.completions.create(
                 model=self.settings.azure_openai_deployment,
                 messages=messages,
                 max_tokens=self.settings.max_tokens,
                 temperature=self.settings.temperature
             )
-
-            review_content = response.choices[0].message.content
+            
+            review_content = completion.choices[0].message.content
             review_content = review_content.replace('*', '').replace('#', '')
 
             sections = extract_sections(review_content, selected_capabilities)
-            
-            # Use sync client for title generation
             case_title = await generate_title(sections["brief_description"], self.openai_client, self.settings)
 
             return CaseReviewResponse(
@@ -215,8 +209,7 @@ class PortfolioService:
                 }
             ]
 
-            response = await asyncio.to_thread(
-                self.openai_client.chat.completions.create,
+            response = await self.openai_client.chat.completions.create(
                 model=self.settings.azure_openai_deployment,
                 messages=messages,
                 max_tokens=self.settings.max_tokens,
@@ -228,11 +221,10 @@ class PortfolioService:
 
             sections = extract_sections(improved_content, selected_capabilities)
             
-            # Only generate new title if the brief description was modified
             if "brief_description" in improvement_prompt.lower():
                 case_title = await generate_title(sections["brief_description"], self.openai_client, self.settings)
             else:
-                case_title = await generate_title(original_case.split("\n")[0], self.openai_client, self.settings)  # Use original title
+                case_title = await generate_title(original_case.split("\n")[0], self.openai_client, self.settings)
 
             return CaseReviewResponse(
                 case_title=case_title,
