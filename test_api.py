@@ -39,9 +39,24 @@ def test_improve_review():
     print(f"Status: {response.status_code}")
     print(json.dumps(response.json(), indent=2))
 
+def test_improve_section():
+    payload = {
+        "section_type": "reflection",
+        "section_content": "The case was handled well.",
+        "improvement_prompt": "Add more details about the clinical examination",
+        "capability_name": "Clinical Knowledge and Skills"
+    }
+
+    response = requests.post(f"{BASE_URL}/improve-section", json=payload)
+    print("\n=== Testing Improve Section Endpoint ===")
+    print(f"Status: {response.status_code}")
+    print(json.dumps(response.json(), indent=2))
+
+
 if __name__ == "__main__":
     # Uncomment the tests you want to run
     
     #test_capabilities()
     #test_generate_review()
-    test_improve_review() 
+    #test_improve_review() 
+    test_improve_section()

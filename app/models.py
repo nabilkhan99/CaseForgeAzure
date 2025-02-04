@@ -37,3 +37,9 @@ class CapabilitiesResponse(BaseModel):
 class ErrorResponse(BaseModel):
     error: bool = True
     message: str
+
+class SectionImprovementRequest(BaseModel):
+    section_type: str = Field(..., description="Type of section to improve (brief_description, capability, reflection, learning_needs)")
+    section_content: str = Field(..., description="Current content of the section")
+    improvement_prompt: str = Field(..., description="Specific improvement request")
+    capability_name: Optional[str] = Field(None, description="Required only when improving a specific capability section")
