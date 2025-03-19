@@ -306,6 +306,7 @@ class PortfolioService:
                     2. Keep all other content exactly the same
                     3. Maintain the same structure and section headings
                     4. Ensure the improvements are specific and detailed
+                    5. Write in British English not American
                     
                     Current case review:
                     {original_case}
@@ -405,6 +406,7 @@ class PortfolioService:
             Please provide an improved version of this section only, the improved section should be in the same format as the current content but only with the improvements requested.
             Maintain professional medical language and be specific. 
             Only return the improved section, do not include any other text.
+            Write in British English not American.
             Make sure the output sounds natural and doesn't directly refer to the improvement request.
             """
 

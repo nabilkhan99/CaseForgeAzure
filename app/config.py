@@ -40,21 +40,23 @@ Brief Description:
 
 {formatted_capabilities}
 
-Reflection: What will I maintain, improve or stop?
+Reflection:
 [Reflect on:
 - What went well and why (to maintain these behaviors)
 - What could be improved in future similar cases
 - What should be stopped or done differently
-- Your emotional response to the case]
+- Your emotional response to the case i.e. how did it make you feel?]
 
 
 Learning needs identified from this event:
 [List specific learning needs, knowledge gaps, or skills to develop based on this case]
 
-Note: Do not include the specific points like "What should be stopped or done differently" in the reflection and learning needs sections. it should be a general reflection on the case using the points above as a guide.
+Note: 
+- Do not include the specific points like "What should be stopped or done differently" in the reflection and learning needs sections. it should be a general reflection on the case using the points above as a guide.
+- Write in British English not American
 
 Here is the case to review:
-{case_description}"""
+"""
 
 # Example 1 - Original case
     EXAMPLE_1: str = """During a duty day I noticed VH, an elderly gentleman was on the list requesting a call back. The telephone number had a code in front of it. I was aware VH was very hard of hearing. The telephone number took me through a text telephone service. I witnessed the use of the text telephone system and conveyed my questions via an operator. VH in turn answered the questions. VH was concerned he may have had a recurrence of his piles and was keen for something to help. We had a brief conversation on the telephone. I became acutely aware that I needed to ask short and simple questions that could be conveyed via a text. Having never seen VH with a similar problem, nor could I see a recent documentation of treatment for haemorrhoids and that it was harder to communicate over the telephone I arranged to see him to further assess face to face."""
@@ -66,7 +68,7 @@ Here is the case to review:
     Communication and consultation skills
     It was interesting to experience the text telephone system. I have now had experience of using a different communication modality. I was able to adapt the language that I used to take into consideration his individual needs. I was able to manage the consultation effectively with the patient through using the text telephone interpreter, which required me to be organized and structured.
 
-    Reflection: What will I maintain, improve or stop?
+    Reflection:
     When asking questions via an operator it is important to be precise with the questions to. It made me consider the importance of e 3 system as well as improving communication with patients using different modalities. Overall I felt this telephone consultation and the process of the consultation was successful.
 
     Learning needs identified from this event:
@@ -89,7 +91,7 @@ Here is the case to review:
     Organisation, management and leadership: 
     During this busy weekend, I attended Ravenswood Hospital, which is geographically remote and therefore I needed to manage my time well to ensure I did tasks at hospitals which were on my way to Ravenswood. When I arrived, there was a major incident occurring and therefore I could not immediately do the seclusion reviews which I had attended to do. Once I established that there was nothing I could do to help, I asked if there was somewhere I could work, so that whilst I was waiting I could continue to work remotely on my laptop. This allowed me to ensure that the delay did not effect patients which still needed my attention, for example medications prescribing remotely, as I could access their records online and prescribe remotely. 
 
-    Reflection: What will I maintain, improve or stop? 
+    Reflection:
     I will continue to improve my time management skills during busy working periods. I feel that every job I have done have been busy in different ways and have required me to juggle tasks and prioritise tasks differently. I am now imminently going to be moving to GP and am excited to see how my skills transfer and what new ones I need to learn. The experience of covering multiple different sites has been unique with this job and is extremely challenging at times, when you cannot be everywhere at once. There will also be a different type of team in GP, which I am looking forward to, especially after having quite minimal contact with a team for much of this rotation. 
 
     Learning needs identified from this event:
@@ -103,7 +105,7 @@ Here is the case to review:
     Communication and consultation skills
     It was interesting to experience the text telephone system. I have now had experience of using a different communication modality. I was able to adapt the language that I used to take into consideration his individual needs. I was able to manage the consultation effectively with the patient through using the text telephone interpreter, which required me to be organized and structured.
 
-    Reflection: What will I maintain, improve or stop?
+    Reflection: 
     When asking questions via an operator it is important to be precise with the questions to. It made me consider the importance of e 3 system as well as improving communication with patients using different modalities. Overall I felt this telephone consultation and the process of the consultation was successful.
 
     Learning needs identified from this event:
@@ -119,7 +121,7 @@ Here is the case to review:
     Communication and consultation skills
     The text telephone system provided valuable learning experience in adapting communication methods. I modified my usual consultation style by breaking down complex questions into shorter, clearer segments that could be easily relayed by the operator. For example, instead of asking "Can you tell me about your symptoms and when they started?", I separated this into "When did the symptoms begin?" and "What symptoms are you experiencing?". I consciously avoided medical jargon, using plain language that could be clearly transmitted through the text system. I confirmed understanding after each exchange by asking VH to repeat key information back to me, ensuring accurate communication despite the technical interface.
 
-    Reflection: What will I maintain, improve or stop?
+    Reflection:
     When asking questions via an operator, I learned that precision and simplicity are crucial. Short, focused questions received clearer responses than longer, compound ones. The systematic approach of waiting for each response before proceeding helped maintain clarity. For future similar consultations, I will maintain the practice of breaking down complex questions and confirming understanding at each step. I could improve by preparing a structured list of essential questions in advance, anticipating the need for clarity in text-based communication. The use of closed questions for specific symptoms and open questions for broader concerns worked particularly well in this format.
 
     Learning needs identified from this event:
@@ -138,7 +140,7 @@ Here is the case to review:
     Organisation, management and leadership: 
     During this busy weekend, I attended Ravenswood Hospital, which is geographically remote and therefore I needed to manage my time well to ensure I did tasks at hospitals which were on my way to Ravenswood.
 
-    Reflection: What will I maintain, improve or stop? 
+    Reflection:
     I will continue to improve my time management skills during busy working periods. I feel that every job I have done have been busy in different ways and have required me to juggle tasks and prioritise tasks differently.
 
     Learning needs identified from this event:
@@ -164,7 +166,7 @@ Here is the case to review:
     Organisation, management and leadership: 
     During this busy weekend, I attended Ravenswood Hospital, which is geographically remote and therefore I needed to manage my time well to ensure I did tasks at hospitals which were on my way to Ravenswood.
 
-    Reflection: What will I maintain, improve or stop? 
+    Reflection:
     I will continue to improve my time management skills during busy working periods. I feel that every job I have done have been busy in different ways and have required me to juggle tasks and prioritise tasks differently.
 
     Learning needs identified from this event:
@@ -180,7 +182,7 @@ Here is the case to review:
     Clinical examination and procedural skills:
     I checked her blood pressure and reviewed her blood sugar diary.
 
-    Reflection: What will I maintain, improve or stop?
+    Reflection:
     The medication review was completed successfully. I will continue to conduct thorough reviews.
 
     Learning needs identified from this event:
@@ -199,7 +201,7 @@ Here is the case to review:
     Clinical examination and procedural skills:
     I checked her blood pressure and reviewed her blood sugar diary.
 
-    Reflection: What will I maintain, improve or stop?
+    Reflection:
     The medication review was completed successfully. I will continue to conduct thorough reviews.
 
     Learning needs identified from this event:
