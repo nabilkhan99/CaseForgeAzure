@@ -43,3 +43,15 @@ class SectionImprovementRequest(BaseModel):
     section_content: str = Field(..., description="Current content of the section")
     improvement_prompt: str = Field(..., description="Specific improvement request")
     capability_name: Optional[str] = Field(None, description="Required only when improving a specific capability section")
+
+class CapabilitySelectionRequest(BaseModel):
+    case_description: str = Field(..., min_length=10, description="The case description to analyze")
+
+class CapabilitySelectionResponse(BaseModel):
+    selected_capabilities: List[str] = Field(..., description="AI-selected capabilities (1-3)")
+
+class ExperienceGroupRequest(BaseModel):
+    case_description: str = Field(..., min_length=10, description="The case description to analyze")
+
+class ExperienceGroupResponse(BaseModel):
+    experience_groups: List[str] = Field(..., description="AI-selected Clinical Experience Groups (1-2)")

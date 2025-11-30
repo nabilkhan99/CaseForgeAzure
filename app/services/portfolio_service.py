@@ -8,116 +8,6 @@ from ..utils.text_processing import extract_sections, generate_title
 from ..utils.capabilities import parse_capabilities, format_capabilities
 from ..models import CaseReviewResponse, CaseReviewSection
 
-
-Fitnes_to_practise = """
-- This is about professionalism and the actions expected to protect people from harm. This includes the awareness of when an individual's performance, conduct or health, or that of others, might put patients, themselves or their colleagues at risk.
-- Understands the GMC document, "Duties of a Doctor".
-- Attends to their professional duties.
-- Awareness that physical or mental illness, or personal habits, might interfere with the competent delivery of patient care.
-- Identifies and notifies an appropriate person when their own or a colleague's performance, conduct or health might be putting others at risk.
-- Responds to complaints or performance issues appropriately."""
-
-Maintaining_an_ethical_approach = """
-- This is about practising ethically with integrity and a respect for equality and diversity.
-- Awareness of the professional codes of practice as described in the GMC document "Good Medical Practice".
-- Understands the need to treat everyone with respect for their beliefs, preferences, dignity and rights.
-- Recognises that people are different and does not discriminate against them because of those differences.
-- Understands that "Good Medical Practice" requires reference to ethical principles."""
-
-Communication_and_consultation_skills = """
-- This is about communication with patients, the use of recognised consultation techniques, establishing patient partnership, managing challenging consultations, third-party consultations and the use of interpreters.
-- Develops a working relationship with the patient, but one in which the problem rather than the person is the focus.
-- Uses a rigid or formulaic approach to achieve the main tasks of the consultation.
-- Provides explanations that are relevant and understandable to the patient, using appropriate language.
-- The use of language is technically correct but not well adapted to the needs and characteristics of the patient.
-- Provides explanations that are medically correct but doctor-centred.
-- Communicates management plans but without negotiating with, or involving, the patient.
-- Consults to an acceptable standard but lacks focus and requires longer consulting times.
-- Aware of when there is a language barrier and can access interpreters either in person or by telephone."""
-
-Data_gathering_and_interpretation = """
-- This is about the gathering, interpretation, and use of data for clinical judgement, including information gathered from the history, clinical records, examination and investigations.
-- Accumulates information from the patient that is relevant to their problem.
-- Uses existing information in the patient records.
-- Employs examinations and investigations that are in line with the patient's problems.
-- Identifies abnormal findings and results."""
-
-Clinical_examination_and_procedural_skills = """
-- This is about clinical examination and procedural skills. By the end of training, the trainee must have demonstrated competence in general and systemic examinations of all of the clinical curriculum areas, this includes the 5 mandatory examinations and a range of skills relevant to General Practice.
-- Chooses examinations in line with the patient's problem(s).
-- Identifies abnormal signs
-- Suggests appropriate procedures related to the patient's problem(s).
-- Observes the professional codes of practice including the use of chaperones.
-- Arranges the place of the examination to give the patient privacy and to respect their dignity.
-- Examination is carried out sensitively and without causing the patient harm
-- Performs procedures and examinations with the patient's consent and with a clinically justifiable reason to do so."""
-
-Making_a_decision_diagnosis = """
-- This is about a conscious, structured approach to making diagnoses and decision-making.
-- Generates an adequate differential diagnosis based on the information available.
-- Generates and tests appropriate hypotheses.
-- Makes decisions by applying rules, plans or protocols.
-- Is starting to develop independent skills in decision making and uses the support of others to confirm these are correct."""
-
-Clinical_management = """
-- This is about the recognition and management of patients' problems.
-- Uses appropriate management options
-- Suggests possible interventions in all cases.
-- Arranges follow up for patients
-- Makes safe prescribing decisions, routinely checking on drug interactions and side effects.
-- Refers safely, acting within the limits of their competence.
-- Recognises medical emergencies and responds to them safely.
-- Ensures that continuity of care can be provided for the patient's problem, e.g. through adequate record keeping."""
-
-Managing_medical_complexity = """
-- This is about aspects of care beyond the acute problem, including the management of co-morbidity, uncertainty, risk and health promotion.
-- Manages health problems separately, without necessarily considering the implications of co- morbidity.
-- Identifies and tolerates uncertainties in the consultation.
-- Attempts to prioritise management options based on an assessment of patient risk.
-- Manages patients with multiple problems with reference to appropriate guidelines for the individual conditions.
-- Considers the impact of the patient's lifestyle on their health. """
-
-Working_with_colleagues_and_in_teams = """
-- This is about working effectively with other professionals to ensure good patient care and includes the sharing of information with colleagues.
-- Shows basic awareness of working within a team rather than in isolation.
-- Understands the different roles, skills and responsibilities that each member brings to a primary health care team.
-- Respects other team members and their contribution but has yet to grasp the advantages of harnessing the potential within the team.
-- Responds to the communications from other team members in a timely and constructive manner.
-- Understands the importance of integrating themselves into the various teams in which they participate."""
-
-Maintaining_performance_learning_and_teaching = """
-- This is about maintaining the performance and effective continuing professional development (CPD) of oneself and others. The evidence for these activities should be shared in a timely manner within the appropriate electronic Portfolio.
-- Knows how to access the available evidence, including the medical literature, clinical performance standards and guidelines for patient care.
-- Engages in some study reacting to immediate clinical learning needs.
-- Changes behaviour appropriately in response to the clinical governance activities of the practice, in particular to the agreed outcomes of the practice's audits, quality improvement activities and significant event analyses.
-- Recognises situations, e.g. through risk assessment, where patient safety could be compromised.
-- Contributes to the education of others."""
-
-
-Organisation_management_and_leadership = """
-- This is about understanding how primary care is organised within the NHS, how teams are managed and the development of clinical leadership skills.
-- Demonstrates a basic understanding of the organisation of primary care and the use of clinical computer systems.
-- Uses the patient record and on-line information during patient contacts, routinely recording each clinical contact in a timely manner following the record-keeping standards of the organisation.
-- Personal organisational and time- management skills are sufficient that patients and colleagues are not inconvenienced or come to any harm.
-- Responds positively to change in the organisation.
-- Manages own workload responsibly."""
-
-Practising_holistically_promoting_health_and_safeguarding = """
-- This is about the ability of the doctor to operate in physical, psychological, socio-economic and cultural dimensions. The doctor is able to take into account patient's feelings and opinions. The doctor encourages health improvement, self-management, preventative medicine and shared care planning with patients and their carers. The doctor has the skills and knowledge to consider and take appropriate safeguarding actions.
-- Enquires into physical, psychological and social aspects of the patient's problem.
-- Recognises the impact of the problem on the patient.
-- Offers treatment and support for the physical, psychological and social aspects of the patient's problem.
-- Recognises the role of the GP in health promotion.
-- Understands and demonstrates principles of adult and child safeguarding, recognising potential indicators of abuse, harm and neglect, taking some appropriate action."""
-
-Community_orientation = """
-- This is about the management of the health and social care of the practice population and local community.
-- Demonstrates understanding of important characteristics of the local population, e.g. patient demography, ethnic minorities, socio-economic differences and disease prevalence, etc.
-- Demonstrates understanding of the range of available services in their particular locality.
-- Understands limited resources within the local community, e.g. the availability of certain drugs, counselling, physiotherapy or child support services.
-- Takes steps to understand local resources in the community – e.g. school nurses, pharmacists, funeral directors, district nurses, local hospices, care homes, social services including child protection, patient participation groups, etc."""
-
-
 class PortfolioService:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -133,9 +23,16 @@ class PortfolioService:
         case_description: str,
         selected_capabilities: List[str]
     ) -> CaseReviewResponse:
+        import time
+        start_time = time.time()
         try:
+            print("🔵 Step 1: Formatting capabilities...")
+            step_start = time.time()
             formatted_capabilities = format_capabilities(selected_capabilities)
+            print(f"   ⏱️  Step 1 took {time.time() - step_start:.2f}s")
             
+            print("🔵 Step 2: Building messages...")
+            step_start = time.time()
             messages = [
                 {
                     "role": "system",
@@ -143,50 +40,78 @@ class PortfolioService:
                 },
                 {
                     "role": "user",
-                    "content": self.settings.EXAMPLE_1
-                },
-                {
-                    "role": "assistant",
-                    "content": self.settings.EXAMPLE_1_RESPONSE
-                },
-                {
-                    "role": "user",
-                    "content": self.settings.EXAMPLE_2
-                },
-                {
-                    "role": "assistant",
-                    "content": self.settings.EXAMPLE_2_RESPONSE
-                },
-                {
-                    "role": "user",
-                    "content": f"""Generate a structured case review with the following:
-                {self.settings.MAIN_PROMPT.format(
-                    formatted_capabilities=formatted_capabilities,
-                    case_description=case_description
-                )}"""
+                    "content": f"""Input Data:
+{case_description}
+
+Task:
+Please convert the notes above into a formal RCGP Clinical Case Review.
+
+Selected Capabilities:
+{formatted_capabilities}"""
                 }
             ]
-
+            print(f"   ⏱️  Step 2 took {time.time() - step_start:.2f}s")
+            
+            print(f"🔵 Step 3: Calling LLM...")
+            print(f"   Model/Deployment: {self.settings.azure_openai_deployment}")
+            print(f"   Endpoint: {self.settings.azure_openai_endpoint}")
+            print(f"   API Version: {self.settings.azure_openai_api_version}")
+            print(f"   Max Tokens: {self.settings.max_tokens}")
+            print(f"   Temperature: {self.settings.temperature}")
+            step_start = time.time()
             completion = await self.openai_client.chat.completions.create(
                 model=self.settings.azure_openai_deployment,
                 messages=messages,
                 max_tokens=self.settings.max_tokens,
                 temperature=self.settings.temperature
             )
+            llm_time = time.time() - step_start
+            print(f"   ⏱️  Step 3 (LLM call) took {llm_time:.2f}s")
             
+            print("🔵 Step 4: LLM response received, processing content...")
+            step_start = time.time()
             review_content = completion.choices[0].message.content
+            print(f"🔵 Step 4b: Content length: {len(review_content)} chars")
+            print(f"\n{'='*80}")
+            print("📄 RAW REVIEW OUTPUT:")
+            print(f"{'='*80}")
+            print(review_content)
+            print(f"{'='*80}\n")
             review_content = review_content.replace('*', '').replace('#', '')
+            print(f"   ⏱️  Step 4 took {time.time() - step_start:.2f}s")
 
+            print("🔵 Step 5: Extracting sections...")
+            step_start = time.time()
             sections = extract_sections(review_content, selected_capabilities)
+            print(f"🔵 Step 5a: Sections extracted: {list(sections.keys())}")
+            print(f"🔵 Step 5b: Brief description length: {len(sections.get('brief_description', ''))} chars")
+            print(f"   ⏱️  Step 5 took {time.time() - step_start:.2f}s")
+            
+            print("🔵 Step 6: Generating title...")
+            step_start = time.time()
             case_title = await generate_title(sections["brief_description"], self.openai_client, self.settings)
+            print(f"🔵 Step 6a: Title generated: '{case_title}'")
+            print(f"   ⏱️  Step 6 took {time.time() - step_start:.2f}s")
 
-            return CaseReviewResponse(
+            print("🔵 Step 7: Creating response object...")
+            step_start = time.time()
+            response = CaseReviewResponse(
                 case_title=case_title,
                 review_content=review_content,
                 sections=CaseReviewSection(**sections)
             )
+            print(f"   ⏱️  Step 7 took {time.time() - step_start:.2f}s")
+            
+            total_time = time.time() - start_time
+            print("✅ Step 8: Response created successfully!")
+            print(f"⏱️  TOTAL TIME: {total_time:.2f}s ({total_time/60:.2f} minutes)")
+            
+            return response
 
         except Exception as e:
+            import traceback
+            print(f"❌ Error in generate_case_review: {str(e)}")
+            print(f"❌ Traceback: {traceback.format_exc()}")
             raise Exception(f"Error generating case review: {str(e)}")
 
     # async def improve_case_review(
@@ -320,6 +245,10 @@ class PortfolioService:
                 }
             ]
 
+            print(f"🔵 Calling LLM for improvement...")
+            print(f"   Model/Deployment: {self.settings.azure_openai_deployment}")
+            print(f"   Max Tokens: {self.settings.max_tokens}")
+            print(f"   Temperature: {self.settings.temperature}")
             response = await self.openai_client.chat.completions.create(
                 model=self.settings.azure_openai_deployment,
                 messages=messages,
@@ -352,8 +281,6 @@ class PortfolioService:
         """Return parsed capabilities dictionary."""
         try:
             capabilities = parse_capabilities(capability_content)
-            # Add debug logging
-            print(f"Parsed capabilities: {capabilities}")  # Temporary debug print
             if not capabilities:
                 raise Exception("No capabilities were parsed")
             # Return directly without wrapping in another dict
@@ -421,6 +348,9 @@ class PortfolioService:
                 }
             ]
 
+            print(f"🔵 Calling LLM for section improvement...")
+            print(f"   Model/Deployment: {self.settings.azure_openai_deployment}")
+            print(f"   Section Type: {section_type}")
             completion = await self.openai_client.chat.completions.create(
                 model=self.settings.azure_openai_deployment,
                 messages=messages,
@@ -433,3 +363,227 @@ class PortfolioService:
 
         except Exception as e:
             raise Exception(f"Error improving section: {str(e)}")
+
+    async def select_capabilities_for_case(self, case_description: str) -> List[str]:
+        """
+        Use LLM to intelligently select 2-3 most relevant capabilities for a case.
+        """
+        try:
+            system_prompt = """You are an expert RCGP (Royal College of General Practitioners) assessor. 
+Your task is to analyze a clinical case description and select the 2-3 most relevant capabilities 
+from the RCGP curriculum that are clearly demonstrated in the case.
+
+Guidelines:
+1. Select only capabilities with clear evidence in the case description
+2. Choose 2-3 capabilities (not more, not less than 2)
+3. Prioritize capabilities that are most prominently demonstrated
+4. Return ONLY the capability names, one per line, exactly as listed
+5. Do not add explanations or numbering"""
+
+            user_prompt = f"""Available RCGP Capabilities:
+
+{capability_content}
+
+---
+
+Case Description:
+{case_description}
+
+---
+
+Based on the case description above, select the 2-3 most relevant capabilities that are clearly demonstrated. 
+Return only the capability names, one per line, exactly as they appear in the list above."""
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+
+            print(f"🔵 Calling LLM for capability selection...")
+            print(f"   Model/Deployment: {self.settings.azure_openai_deployment}")
+            print(f"   Max Tokens: 200, Temperature: 0.3")
+            completion = await self.openai_client.chat.completions.create(
+                model=self.settings.azure_openai_deployment,
+                messages=messages,
+                max_tokens=200,
+                temperature=0.3  # Lower temperature for more consistent selection
+            )
+
+            response_content = completion.choices[0].message.content.strip()
+            
+            # Parse the response to extract capability names
+            selected_capabilities = []
+            for line in response_content.split('\n'):
+                line = line.strip()
+                # Remove any numbering or bullet points
+                line = line.lstrip('0123456789.-• ')
+                if line and line in self.capabilities:
+                    selected_capabilities.append(line)
+            
+            # Ensure we have 1-3 capabilities
+            if not selected_capabilities:
+                raise Exception("No valid capabilities were selected by AI")
+            
+            # Limit to 2-3 capabilities
+            selected_capabilities = selected_capabilities[:3]
+            
+            return selected_capabilities
+
+        except Exception as e:
+            raise Exception(f"Error selecting capabilities: {str(e)}")
+
+    async def select_experience_groups(self, case_description: str) -> List[str]:
+        """
+        Use LLM to select 1-2 Clinical Experience Groups based on the case context.
+        Uses the exact prompt from exp_group.prompty.
+        """
+        try:
+            system_prompt = """
+            You are an expert Medical Educational Assistant for the 'fourteenfishermen' GP portfolio tool. Your task is to analyze a Clinical Case Log written by a General Practitioner trainee and categorize it into the correct *Clinical Experience Group(s)*.
+
+*CORE INSTRUCTIONS:*
+1.  *Analyze Context over Diagnosis:* Do not classify based solely on the medical condition. You must look at the context (patient age, social setting, vulnerability, urgency, and the specific focus of the trainee's reflection).
+2.  *Select 1-2 Groups:* Ideally, select *two* groups if the case touches on multiple aspects (e.g., a child with a mental health issue). If only one fits, select one.
+3.  *Strict Fallback:* Only use "Clinical problems not linked to a specific clinical experience group" if *absolutely none* of the specific groups apply. This should be infrequent.
+
+*DEFINITIONS OF CLINICAL EXPERIENCE GROUPS:*
+1.  *Infants, children and young people (under 19):* Patients <19 years (includes students, parents of young children).
+2.  *Gender, reproductive and sexual health:* Women’s/men’s health, LGBTQ+, gynaecology, breast, sexual health/BBV.
+3.  *People with long-term conditions:* Cancer, multi-morbidity, disability, chronic illness (diabetes, asthma, etc.).
+4.  *Older adults:* Frailty, end-of-life, complex care in >65s.
+5.  *Mental health:* Addiction, alcohol, substance misuse, anxiety, depression, health anxiety.
+6.  *Urgent and unscheduled care:* Acute/septic presentations, A&E, OOH hubs, same-day triage.
+7.  *People with health disadvantage and vulnerabilities:* Veterans, asylum seekers, learning disabilities, safeguarding, capacity issues, sensory impairment (deaf/blind).
+8.  *Population Health and health promotion:* Prevention, lifestyle advice, self-management, screening.
+9.  *Clinical problems not linked to a specific clinical experience group:* Fallback only.
+
+*EXTENSIVE REASONING EXAMPLES (Use these to guide your logic):*
+
+*Scenario: Patient with Vertigo*
+•⁠  ⁠If context is: History of breast cancer raising suspicion of brain metastasis.
+    * -> *People with long term conditions including cancer, multi-morbidity and disability*
+•⁠  ⁠If context is: Acute onset, unwell, seen in urgent care setting.
+    * -> *Urgent and unscheduled care*
+•⁠  ⁠If context is: Elderly/frail patient with capacity difficulties explaining symptoms.
+    * -> *Older adults including frailty* AND *People with health disadvantage and vulnerabilities*
+•⁠  ⁠If context is: Empowering patient to self-manage symptoms/driving advice.
+    * -> *Population Health and health promotion*
+
+*Scenario: Patient with Diabetes*
+•⁠  ⁠If context is: Pregnant patient with recurrent thrush/complications.
+    * -> *People with long term conditions* AND *Gender, reproductive and sexual health*
+•⁠  ⁠If context is: Patient has a learning disability limiting medication compliance.
+    * -> *People with health disadvantage and vulnerabilities* AND *People with long term conditions*
+•⁠  ⁠If context is: Mental health prevents understanding of medication needs.
+    * -> *Mental health (including addiction...)* AND *People with long term conditions*
+•⁠  ⁠If context is: New diagnosis in a teenager.
+    * -> *Infants, children and young people* AND *People with long term conditions*
+
+*Scenario: Heroin Addict*
+•⁠  ⁠If context is: Septic admission seen in same-day access.
+    * -> *Urgent and unscheduled care* AND *Mental health (including addiction...)*
+•⁠  ⁠If context is: Safeguarding children of the patient.
+    * -> *Infants, children and young people* AND *People with health disadvantage and vulnerabilities*
+•⁠  ⁠If context is: Sexual implications/Blood-borne virus.
+    * -> *Mental health (including addiction...)* AND *Gender, reproductive and sexual health*
+
+*Scenario: Suspected Skin Cancer*
+•⁠  ⁠If context is: Melanoma on penis affecting men's health.
+    * -> *Gender, reproductive and sexual health* AND *People with long term conditions (cancer)*
+•⁠  ⁠If context is: Bedbound patient who previously had a stroke.
+    * -> *Older adults including frailty* AND *People with long term conditions*
+•⁠  ⁠If context is: Patient has significant health anxiety about the mole.
+    * -> *Mental health (including addiction...)*
+•⁠  ⁠If context is: Veteran/Naval officer with history of sun exposure abroad.
+    * -> *People with health disadvantage and vulnerabilities (veterans)*
+
+*Scenario: Rash (Lyme Disease Concern)*
+•⁠  ⁠If context is: Learning disability, attending with carer, capacity issues.
+    * -> *People with health disadvantage and vulnerabilities*
+•⁠  ⁠If context is: Health promotion on tick prevention.
+    * -> *Population Health and health promotion*
+
+*Scenario: Altered Bowel Habit / IBS*
+•⁠  ⁠If context is: Deaf patient relying on sign language/interpreter.
+    * -> *People with health disadvantage and vulnerabilities*
+•⁠  ⁠If context is: Young person (18yo) with family history.
+    * -> *Infants, children and young people*
+•⁠  ⁠If context is: Older woman, checking CA125 (ovarian cancer risk).
+    * -> *Gender, reproductive and sexual health* AND *Older adults including frailty*
+
+*Scenario: Persistent Cough*
+•⁠  ⁠If context is: Toddler at nursery with viral illnesses.
+    * -> *Infants, children and young people*
+•⁠  ⁠If context is: Veteran with previous asbestos exposure in Navy.
+    * -> *People with health disadvantage and vulnerabilities*
+•⁠  ⁠If context is: History of substance misuse leading to appointment.
+    * -> *Mental health (including addiction...)*
+            
+            """
+
+            print("🟣 Step 1: Building experience groups prompt...")
+            user_prompt = f"""Input Log:
+{case_description}
+
+Task:
+Identify the 1 or 2 most appropriate Clinical Experience Groups based on the specific focus of the reflection above. Return ONLY the group names as a list, one per line."""
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+
+            print(f"🟣 Step 2: Calling LLM for experience groups...")
+            print(f"   Model/Deployment: {self.settings.azure_openai_deployment}")
+            print(f"   Max Tokens: 200, Temperature: 0.1")
+            completion = await self.openai_client.chat.completions.create(
+                model=self.settings.azure_openai_deployment,
+                messages=messages,
+                max_tokens=200,
+                temperature=0.1  # Low temperature for consistent classification
+            )
+
+            print("🟣 Step 3: LLM response received for experience groups")
+            response_content = completion.choices[0].message.content.strip()
+            print(f"🟣 Step 4: Raw experience group response: {response_content}")
+            
+            # Valid experience groups - using shortened names from prompty
+            valid_groups = [
+                "Infants, children and young people (under 19)",
+                "Gender, reproductive and sexual health",
+                "People with long-term conditions",
+                "Older adults",
+                "Mental health",
+                "Urgent and unscheduled care",
+                "People with health disadvantage and vulnerabilities",
+                "Population Health and health promotion",
+                "Clinical problems not linked to a specific clinical experience group"
+            ]
+            
+            # Parse the response to extract group names
+            selected_groups = []
+            for line in response_content.split('\n'):
+                line = line.strip()
+                # Remove any numbering, bullet points, or asterisks
+                line = line.lstrip('0123456789.-•* ')
+                line = line.rstrip('*')
+                
+                # Check if this line matches any valid group
+                for valid_group in valid_groups:
+                    # Strict matching: The line must CONTAIN the full valid group name
+                    if valid_group.lower() in line.lower():
+                        if valid_group not in selected_groups:
+                            selected_groups.append(valid_group)
+                        break
+            
+            # Limit to 2 groups
+            selected_groups = selected_groups[:2]
+            
+            # Fallback if no groups found
+            if not selected_groups:
+                selected_groups = ["Clinical problems not linked to a specific clinical experience group"]
+            
+            return selected_groups
+
+        except Exception as e:
+            raise Exception(f"Error selecting experience groups: {str(e)}")

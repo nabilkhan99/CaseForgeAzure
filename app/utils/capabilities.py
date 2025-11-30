@@ -28,5 +28,4 @@ def format_capabilities(selected_capabilities: List[str]) -> str:
     formatted_text = ""
     for cap in selected_capabilities:
         formatted_text += f"Capability: {cap}\n"
-        formatted_text += "Justification [describe how your actions and approach link to the capability]:\n\n"
     return formatted_text
