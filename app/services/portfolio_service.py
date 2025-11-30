@@ -457,6 +457,8 @@ Return only the capability names, one per line, exactly as they appear in the li
 8.  *Population Health and health promotion:* Prevention, lifestyle advice, self-management, screening.
 9.  *Clinical problems not linked to a specific clinical experience group:* Fallback only.
 
+CRITICAL AGE CONSTRAINT: The age limit of "under 19" is absolute. Any patient aged 19 years or older is STRICTLY excluded from the "Infants, children and young people" group.
+
 *EXTENSIVE REASONING EXAMPLES (Use these to guide your logic):*
 
 *Scenario: Patient with Vertigo*
