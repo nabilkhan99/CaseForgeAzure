@@ -1,17 +1,21 @@
 # Azure Functions requirements
-azure-functions==1.18.0
+azure-functions
+
 # Core dependencies
-fastapi==0.109.2
-uvicorn==0.27.1
-pydantic==2.6.1
-pydantic-settings==2.1.0
+fastapi
+uvicorn[standard]
+pydantic>=2.10
+pydantic-settings
 
 # AI Services
-anthropic==0.18.1
-openai==1.55.3
+anthropic
+# Note: openai version is driven by openai-agents requirements
+
+# OpenAI Agents SDK (for Clinical Master) - this drives openai version
+openai-agents>=0.1.0
 
 # Utils
-python-dotenv==1.0.0
-python-multipart==0.0.9
-aiohttp==3.9.3
-
+python-dotenv
+python-multipart
+aiohttp
+websockets

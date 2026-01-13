@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clinical Master - Voice Test</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+
+        h1 {
+            color: #00d9ff;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #connect {
+            background: #00d9ff;
+            color: #1a1a2e;
+        }
+
+        #disconnect {
+            background: #ff4757;
+            color: white;
+        }
+
+        #endConsult {
+            background: #ffa502;
+            color: #1a1a2e;
+        }
+
+        .status {
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-weight: 500;
+        }
+
+        .status.connected {
+            background: rgba(0, 217, 255, 0.2);
+            border: 1px solid #00d9ff;
+        }
+
+        .status.disconnected {
+            background: rgba(255, 71, 87, 0.2);
+            border: 1px solid #ff4757;
+        }
+
+        .timer {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ffa502;
+            margin: 10px 0;
+        }
+
+        .transcript {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .transcript h3 {
+            margin-top: 0;
+            color: #00d9ff;
+        }
+
+        .message {
+            padding: 8px 12px;
+            margin: 8px 0;
+            border-radius: 6px;
+        }
+
+        .message.patient {
+            background: #0f3460;
+        }
+
+        .message.trainee {
+            background: #1e5128;
+        }
+
+        .message .role {
+            font-weight: bold;
+            opacity: 0.7;
+            font-size: 12px;
+        }
+
+        .events {
+            background: #0d1b2a;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .feedback {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .feedback h3 {
+            color: #00d9ff;
+            margin-top: 0;
+        }
+
+        .domain {
+            background: #0f3460;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+
+        .domain-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .score {
+            font-size: 24px;
+            font-weight: bold;
+            color: #00d9ff;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🩺 Clinical Master - Voice Test</h1>
+
+    <div class="controls">
+        <button id="connect">Connect</button>
+        <button id="disconnect" disabled>Disconnect</button>
+        <button id="endConsult" disabled>End Consultation</button>
+    </div>
+
+    <div id="status" class="status disconnected">Disconnected</div>
+    <div id="timer" class="timer"></div>
+
+    <div class="transcript">
+        <h3>Consultation Transcript</h3>
+        <div id="messages"></div>
+    </div>
+
+    <div class="events">
+        <strong>Events:</strong>
+        <div id="eventLog"></div>
+    </div>
+
+    <div id="feedbackSection" class="feedback" style="display: none;">
+        <h3>📋 Feedback</h3>
+        <div id="feedbackContent"></div>
+    </div>
+
+    <script>
+        const SERVER_URL = 'ws://localhost:8001';
+
+        let ws = null;
+        let audioContext = null;
+        let mediaStream = null;
+        let audioWorklet = null;
+        let timerInterval = null;
+        let endTime = null;
+
+        const connectBtn = document.getElementById('connect');
+        const disconnectBtn = document.getElementById('disconnect');
+        const endConsultBtn = document.getElementById('endConsult');
+        const statusDiv = document.getElementById('status');
+        const timerDiv = document.getElementById('timer');
+        const messagesDiv = document.getElementById('messages');
+        const eventLogDiv = document.getElementById('eventLog');
+        const feedbackSection = document.getElementById('feedbackSection');
+        const feedbackContent = document.getElementById('feedbackContent');
+
+        connectBtn.onclick = connect;
+        disconnectBtn.onclick = disconnect;
+        endConsultBtn.onclick = endConsultation;
+
+        async function connect() {
+            const sessionId = crypto.randomUUID();
+            ws = new WebSocket(`${SERVER_URL}/ws/${sessionId}`);
+
+            ws.onopen = async () => {
+                updateStatus('Connected - Starting session...', 'connected');
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+
+                // Start audio capture
+                try {
+                    await startAudioCapture();
+                    logEvent('Audio capture started');
+                } catch (e) {
+                    logEvent('Audio error: ' + e.message);
+                }
+            };
+
+            ws.onmessage = handleMessage;
+
+            ws.onerror = (e) => {
+                logEvent('WebSocket error');
+                console.error(e);
+            };
+
+            ws.onclose = () => {
+                updateStatus('Disconnected', 'disconnected');
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                endConsultBtn.disabled = true;
+                stopTimer();
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+            stopAudioCapture();
+        }
+
+        function endConsultation() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'end_consultation' }));
+            }
+        }
+
+        function handleMessage(event) {
+            const data = JSON.parse(event.data);
+            logEvent(data.type);
+
+            switch (data.type) {
+                case 'session_started':
+                    updateStatus('Session active - Speak to the patient', 'connected');
+                    endConsultBtn.disabled = false;
+                    startTimer(data.duration_seconds);
+                    break;
+
+                case 'audio':
+                    playAudio(data.audio);
+                    break;
+
+                case 'history_added':
+                    if (data.item && data.item.content) {
+                        addMessage(data.item.role, data.item.content);
+                    }
+                    break;
+
+                case 'tool_start':
+                    logEvent('Tool: ' + data.tool);
+                    break;
+
+                case 'tool_end':
+                    addMessage('system', `[${data.tool}]: ${data.output}`);
+                    break;
+
+                case 'consultation_ended':
+                    updateStatus('Consultation ended - ' + data.message, 'disconnected');
+                    stopTimer();
+                    endConsultBtn.disabled = true;
+                    break;
+
+                case 'feedback_ready':
+                    displayFeedback(data.feedback);
+                    break;
+
+                case 'error':
+                    logEvent('Error: ' + data.message);
+                    break;
+            }
+        }
+
+        function updateStatus(text, className) {
+            statusDiv.textContent = text;
+            statusDiv.className = 'status ' + className;
+        }
+
+        function logEvent(text) {
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+            eventLogDiv.appendChild(entry);
+            eventLogDiv.scrollTop = eventLogDiv.scrollHeight;
+        }
+
+        function addMessage(role, content) {
+            const msg = document.createElement('div');
+            msg.className = 'message ' + (role === 'assistant' ? 'patient' : 'trainee');
+            msg.innerHTML = `<div class="role">${role === 'assistant' ? 'Patient' : 'You'}</div>${content}`;
+            messagesDiv.appendChild(msg);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function startTimer(seconds) {
+            endTime = Date.now() + (seconds * 1000);
+            timerInterval = setInterval(updateTimer, 1000);
+            updateTimer();
+        }
+
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+        }
+
+        function updateTimer() {
+            const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+            const mins = Math.floor(remaining / 60);
+            const secs = remaining % 60;
+            timerDiv.textContent = `⏱️ ${mins}:${secs.toString().padStart(2, '0')}`;
+
+            if (remaining <= 30) {
+                timerDiv.style.color = '#ff4757';
+            }
+        }
+
+        async function startAudioCapture() {
+            audioContext = new AudioContext({ sampleRate: 24000 });
+            mediaStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    sampleRate: 24000,
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true
+                }
+            });
+
+            const source = audioContext.createMediaStreamSource(mediaStream);
+            const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+            processor.onaudioprocess = (e) => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const int16Array = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        int16Array[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
+                    }
+                    ws.send(JSON.stringify({
+                        type: 'audio',
+                        data: Array.from(int16Array)
+                    }));
+                }
+            };
+
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+        }
+
+        function stopAudioCapture() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext) {
+                audioContext.close();
+            }
+            resetAudioQueue();
+        }
+
+        // Audio playback queue to prevent overlapping
+        let audioQueue = [];
+        let isPlaying = false;
+        let nextPlayTime = 0;
+
+        function playAudio(base64Audio) {
+            // Add audio to queue
+            audioQueue.push(base64Audio);
+
+            // Start processing queue if not already playing
+            if (!isPlaying) {
+                processAudioQueue();
+            }
+        }
+
+        function processAudioQueue() {
+            if (audioQueue.length === 0) {
+                isPlaying = false;
+                return;
+            }
+
+            isPlaying = true;
+            const base64Audio = audioQueue.shift();
+
+            const audioData = atob(base64Audio);
+            const arrayBuffer = new ArrayBuffer(audioData.length);
+            const view = new Uint8Array(arrayBuffer);
+            for (let i = 0; i < audioData.length; i++) {
+                view[i] = audioData.charCodeAt(i);
+            }
+
+            // Convert to float32 for Web Audio API
+            const int16Array = new Int16Array(arrayBuffer);
+            const float32Array = new Float32Array(int16Array.length);
+            for (let i = 0; i < int16Array.length; i++) {
+                float32Array[i] = int16Array[i] / 32768;
+            }
+
+            const audioBuffer = audioContext.createBuffer(1, float32Array.length, 24000);
+            audioBuffer.getChannelData(0).set(float32Array);
+
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+
+            // Schedule playback at the right time (sequential, no overlap)
+            const currentTime = audioContext.currentTime;
+            const startTime = Math.max(currentTime, nextPlayTime);
+            const duration = audioBuffer.duration;
+
+            source.start(startTime);
+            nextPlayTime = startTime + duration;
+
+            // Process next chunk after this one finishes
+            source.onended = () => {
+                processAudioQueue();
+            };
+        }
+
+        // Reset audio queue on disconnect
+        function resetAudioQueue() {
+            audioQueue = [];
+            isPlaying = false;
+            nextPlayTime = 0;
+        }
+
+        function displayFeedback(feedback) {
+            feedbackSection.style.display = 'block';
+
+            let html = '';
+
+            // Domains
+            ['data_gathering', 'clinical_management', 'interpersonal_skills'].forEach(key => {
+                const domain = feedback[key];
+                if (domain) {
+                    html += `
+                        <div class="domain">
+                            <div class="domain-header">
+                                <strong>${domain.domain}</strong>
+                                <span class="score">${domain.score}/100</span>
+                            </div>
+                            <div><strong>Strengths:</strong> ${domain.strengths?.join(', ') || 'None noted'}</div>
+                            <div><strong>Improvements:</strong> ${domain.improvements?.join(', ') || 'None noted'}</div>
+                        </div>
+                    `;
+                }
+            });
+
+            // Summary
+            if (feedback.overall_summary) {
+                html += `<p><strong>Summary:</strong> ${feedback.overall_summary}</p>`;
+            }
+
+            // Learning points
+            if (feedback.key_learning_points?.length) {
+                html += `<p><strong>Key Learning Points:</strong></p><ul>`;
+                feedback.key_learning_points.forEach(point => {
+                    html += `<li>${point}</li>`;
+                });
+                html += '</ul>';
+            }
+
+            feedbackContent.innerHTML = html;
+        }
+    </script>
+</body>
+
+</html>

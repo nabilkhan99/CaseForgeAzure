@@ -14,11 +14,11 @@ class Settings(BaseSettings):
     # AI Model Settings
     openai_model: str = "gpt-4.1-mini"
     anthropic_model: str = "claude-3-opus-20240229"
-    max_tokens: int = 3000
-    temperature: float = 0.5
+    max_tokens: int = 2500
+    temperature: float = 0.3
     
     # Azure OpenAI Settings
-    azure_openai_endpoint: str = "https://ai-caseforge2025a060083517978.cognitiveservices.azure.com"
+    azure_openai_endpoint: str = "https://ai-caseforge2025a060083517978.openai.azure.com"
     azure_openai_api_version: str = "2025-01-01-preview"
     azure_openai_deployment: str = "gpt-4.1-mini"
     
@@ -587,7 +587,7 @@ I am aware that I need to continue to improve my skills in seeing patients in re
         
         # Update initialization to include Azure settings
         kwargs['azure_openai_api_key'] = os.environ.get('AZURE_OPENAI_API_KEY', '')
-        kwargs['azure_openai_endpoint'] = os.environ.get('AZURE_OPENAI_ENDPOINT', 'https://ai-caseforge2025a060083517978.cognitiveservices.azure.com')
+        kwargs['azure_openai_endpoint'] = os.environ.get('AZURE_OPENAI_ENDPOINT', 'https://fourteenfisherman-resource.openai.azure.com')
         kwargs['azure_openai_api_version'] = os.environ.get('AZURE_OPENAI_API_VERSION', '2025-01-01-preview')
         kwargs['azure_openai_deployment'] = os.environ.get('AZURE_OPENAI_DEPLOYMENT', 'gpt-4.1-mini')
         
