@@ -33,12 +33,17 @@ class ClinicalMasterSettings(BaseSettings):
     # Session Configuration
     CONSULTATION_DURATION_SECONDS: int = 120  # 2 minutes for testing
     
-    # Voice settings
+    # Voice settings (marin or cedar recommended for best quality)
     DEFAULT_VOICE: str = "marin"
     
-    # VAD settings
-    VAD_SILENCE_DURATION_MS: int = 500
-    VAD_PREFIX_PADDING_MS: int = 300
+    # Turn detection settings
+    # Using semantic_vad (recommended by OpenAI) instead of server_vad
+    # semantic_vad provides more intelligent turn detection based on semantic understanding
+    # Note: server_vad settings (silence_duration_ms, prefix_padding_ms) are not used with semantic_vad
+    TURN_DETECTION_TYPE: str = "semantic_vad"
+    
+    # Noise reduction settings (near_field for typical microphone use, far_field for speaker)
+    NOISE_REDUCTION_TYPE: str = "near_field"
     
     class Config:
         env_file = str(_env_file)

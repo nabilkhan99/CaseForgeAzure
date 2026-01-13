@@ -114,25 +114,30 @@ class SessionManager:
         logger.info(f"Session {session_id}: Connecting to Azure OpenAI at {azure_url}")
         
         # Configure for Azure OpenAI with custom URL and headers
+        # Using GA API format per OpenAI Realtime API documentation
         model_config = {
             "url": azure_url,
             "headers": {
                 "api-key": settings.AZURE_OPENAI_API_KEY,
             },
             "initial_model_settings": {
-                "turn_detection": {
-                    "type": "server_vad",
-                    "prefix_padding_ms": settings.VAD_PREFIX_PADDING_MS,
-                    "silence_duration_ms": settings.VAD_SILENCE_DURATION_MS,
-                    "interrupt_response": True,
-                    "create_response": True,
-                },
+                "type": "realtime",  # Required for GA API
+                "model": settings.AZURE_OPENAI_REALTIME_DEPLOYMENT,
                 "audio": {
-                    "voice": settings.DEFAULT_VOICE,
-                },
-                # Enable transcription of user's speech
-                "input_audio_transcription": {
-                    "model": "whisper-1",
+                    "input": {
+                        "format": {"type": "audio/pcm", "rate": 24000},
+                        "turn_detection": {
+                            "type": settings.TURN_DETECTION_TYPE,  # semantic_vad recommended
+                            "create_response": True,
+                            "interrupt_response": True,
+                        },
+                        "noise_reduction": {"type": settings.NOISE_REDUCTION_TYPE},
+                        "transcription": {"model": "whisper-1"},
+                    },
+                    "output": {
+                        "format": {"type": "audio/pcm"},
+                        "voice": settings.DEFAULT_VOICE,
+                    },
                 },
             },
         }
@@ -249,7 +254,24 @@ class SessionManager:
             
         elif event.type == "audio_interrupted":
             # Audio was interrupted by user speech
-            pass
+            # Per docs: send conversation.item.truncate to remove unplayed audio from conversation
+            session = self.active_sessions.get(session_id)
+            if session:
+                try:
+                    item_id = getattr(event, 'item_id', None)
+                    audio_end_ms = getattr(event, 'audio_end_ms', None)
+                    if item_id and audio_end_ms is not None:
+                        truncate_event = {
+                            "type": "conversation.item.truncate",
+                            "item_id": item_id,
+                            "content_index": 0,
+                            "audio_end_ms": audio_end_ms
+                        }
+                        # Send truncate event to API
+                        await session.send_event(truncate_event)
+                        logger.debug(f"Session {session_id}: Sent truncate event for item {item_id}")
+                except Exception as e:
+                    logger.debug(f"Session {session_id}: Could not send truncate event - {e}")
             
         elif event.type == "audio_end":
             # Audio streaming finished
@@ -307,7 +329,9 @@ class SessionManager:
                 raw_type = getattr(raw_event, "type", "")
                 
                 # Handle input audio transcription (user's speech converted to text)
-                if raw_type == "input_audio_transcription_completed":
+                # Support both old SDK and GA API event names
+                if raw_type in ("input_audio_transcription_completed", 
+                               "conversation.item.input_audio_transcription.completed"):
                     transcript_text = getattr(raw_event, "transcript", "")
                     if transcript_text:
                         logger.info(f"Session {session_id}: User transcription: {transcript_text[:100]}...")
@@ -321,15 +345,41 @@ class SessionManager:
                             "type": "transcript_update",
                             "item": {"role": "user", "content": transcript_text}
                         }))
+                
+                # Handle streaming input transcription delta (GA API)
+                elif raw_type == "conversation.item.input_audio_transcription.delta":
+                    delta_text = getattr(raw_event, "delta", "")
+                    if delta_text:
+                        await websocket.send_text(json.dumps({
+                            "type": "transcript_delta",
+                            "item": {"role": "user", "content": delta_text}
+                        }))
                         
                 # Handle partial transcript updates (assistant's speech as text)
-                elif raw_type == "transcript_delta":
+                # Support both old and new GA API event names
+                elif raw_type in ("transcript_delta", "response.output_audio_transcript.delta"):
                     delta_text = getattr(raw_event, "delta", "")
                     if delta_text:
                         # Send delta to frontend for real-time display
                         await websocket.send_text(json.dumps({
                             "type": "transcript_delta",
                             "item": {"role": "assistant", "content": delta_text}
+                        }))
+                
+                # Handle completed assistant transcript (GA API event name)
+                elif raw_type == "response.output_audio_transcript.done":
+                    transcript_text = getattr(raw_event, "transcript", "")
+                    if transcript_text:
+                        logger.info(f"Session {session_id}: Assistant transcript: {transcript_text[:100]}...")
+                        self.transcripts[session_id].append({
+                            "role": "assistant",
+                            "content": transcript_text,
+                            "timestamp": datetime.now().isoformat(),
+                        })
+                        # Send completed transcript to frontend
+                        await websocket.send_text(json.dumps({
+                            "type": "transcript_update",
+                            "item": {"role": "assistant", "content": transcript_text}
                         }))
                         
                 # Handle item updates which may contain transcripts
