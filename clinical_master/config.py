@@ -23,12 +23,16 @@ class ClinicalMasterSettings(BaseSettings):
     
     # Azure OpenAI Configuration
     AZURE_OPENAI_ENDPOINT: str = ""
-    AZURE_OPENAI_API_KEY: str = ""
-    AZURE_OPENAI_REALTIME_DEPLOYMENT: str = "gpt-realtime"
-    AZURE_OPENAI_API_VERSION: str = "2024-10-01-preview"
+    AZURE_OPENAI_API_KEY: str = ""  # Primary key (for realtime)
     
-    # Text model for feedback generation (can use existing deployment)
-    AZURE_OPENAI_CHAT_DEPLOYMENT: str = "gpt-4"
+    # Realtime API (voice)
+    AZURE_OPENAI_REALTIME_DEPLOYMENT: str = "gpt-realtime"
+    AZURE_OPENAI_REALTIME_API_VERSION: str = "2024-10-01-preview"
+    
+    # Chat Completions API (text/feedback)
+    AZURE_OPENAI_CHAT_DEPLOYMENT: str = "gpt-4.1"
+    AZURE_OPENAI_CHAT_API_VERSION: str = "2024-12-01-preview"
+    AZURE_OPENAI_CHAT_API_KEY: str = ""  # Chat deployment key (if different from primary)
     
     # Session Configuration
     CONSULTATION_DURATION_SECONDS: int = 120  # 2 minutes for testing

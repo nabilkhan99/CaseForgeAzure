@@ -107,7 +107,7 @@ class SessionManager:
         
         azure_url = (
             f"{ws_endpoint}/openai/realtime"
-            f"?api-version={settings.AZURE_OPENAI_API_VERSION}"
+            f"?api-version={settings.AZURE_OPENAI_REALTIME_API_VERSION}"
             f"&deployment={settings.AZURE_OPENAI_REALTIME_DEPLOYMENT}"
         )
         
