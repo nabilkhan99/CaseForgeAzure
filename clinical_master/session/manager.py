@@ -23,10 +23,12 @@ from agents.realtime.config import RealtimeUserInputMessage
 try:
     from ..config import settings
     from ..agents.patient import get_patient_agent
+    from ..db import SessionRepository
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from clinical_master.config import settings
     from clinical_master.agents.patient import get_patient_agent
+    from clinical_master.db import SessionRepository
 
 logger = logging.getLogger(__name__)
 
@@ -79,16 +81,69 @@ class SessionManager:
         self.transcripts: dict[str, list[dict]] = {}
         self.timers: dict[str, ConsultationTimer] = {}
         self.feedback_results: dict[str, dict] = {}
+        # Database session info: { session_id: { db_session_id, user_id, station_id, station_data } }
+        self.db_sessions: dict[str, dict] = {}
+        # Initialize repository (will be lazy-loaded to avoid startup errors)
+        self._db_repo: SessionRepository | None = None
     
-    async def connect(self, websocket: WebSocket, session_id: str):
+    @property
+    def db_repo(self) -> SessionRepository | None:
+        """Lazy-load database repository."""
+        if self._db_repo is None:
+            try:
+                self._db_repo = SessionRepository()
+            except Exception as e:
+                logger.warning(f"Could not initialize database repository: {e}")
+        return self._db_repo
+    
+    async def connect(self, websocket: WebSocket, session_id: str, user_id: str | None = None, station_id: str | None = None):
         """
         Accept WebSocket connection and start realtime session.
+        
+        Args:
+            websocket: WebSocket connection
+            session_id: Client session identifier
+            user_id: Authenticated user's ID (optional, for database persistence)
+            station_id: Station to load (optional, defaults to first available station)
         """
         await websocket.accept()
         self.websockets[session_id] = websocket
         self.transcripts[session_id] = []
         
         logger.info(f"Session {session_id}: Connection accepted")
+        
+        # Load station and create database session if repository is available
+        station_data = None
+        db_session_id = None
+        if self.db_repo:
+            try:
+                # Get station from database
+                if station_id:
+                    station_data = self.db_repo.get_station(station_id)
+                else:
+                    station_data = self.db_repo.get_first_station()
+                
+                if station_data:
+                    logger.info(f"Session {session_id}: Loaded station '{station_data.get('title')}'")
+                    
+                    # Create database session record if user is authenticated
+                    if user_id:
+                        db_session = self.db_repo.create_session(user_id, station_data['id'])
+                        if db_session:
+                            db_session_id = db_session['id']
+                            logger.info(f"Session {session_id}: Created DB session {db_session_id}")
+                else:
+                    logger.warning(f"Session {session_id}: No station found in database")
+            except Exception as e:
+                logger.error(f"Session {session_id}: Database error - {e}")
+        
+        # Store database session info
+        self.db_sessions[session_id] = {
+            'db_session_id': db_session_id,
+            'user_id': user_id,
+            'station_id': station_data['id'] if station_data else None,
+            'station_data': station_data
+        }
         
         # Get patient agent
         agent = get_patient_agent()
@@ -222,8 +277,17 @@ class SessionManager:
                 "message": "Time's up! Generating feedback...",
             }))
         
-        # Trigger async feedback generation
+        # Save transcript to database
         transcript = self.transcripts.get(session_id, [])
+        db_info = self.db_sessions.get(session_id, {})
+        if db_info.get('db_session_id') and self.db_repo:
+            try:
+                self.db_repo.save_transcript(db_info['db_session_id'], transcript)
+                self.db_repo.update_session_status(db_info['db_session_id'], 'processing')
+            except Exception as e:
+                logger.error(f"Session {session_id}: Failed to save transcript - {e}")
+        
+        # Trigger async feedback generation
         asyncio.create_task(self._generate_feedback(session_id, transcript))
         
         # Disconnect the realtime session
@@ -457,20 +521,77 @@ class SessionManager:
         try:
             logger.info(f"Session {session_id}: Generating feedback...")
             
-            # Case brief for context
-            case_brief = (
-                "Margaret Thompson, 58-year-old retired teacher with 3 days of chest pain. "
-                "Key history: hypertension, type 2 diabetes, smoker, family history of MI. "
-                "Red flags: pain at rest/night, breathlessness, ankle swelling. "
-                "ECG shows ST depression in V4-V6."
-            )
+            # Get case brief from station data if available
+            db_info = self.db_sessions.get(session_id, {})
+            station_data = db_info.get('station_data', {})
+            
+            if station_data:
+                case_brief = (
+                    f"{station_data.get('patient_name', 'Unknown')}, "
+                    f"{station_data.get('patient_age', 'Unknown')}-year-old. "
+                    f"{station_data.get('candidate_instructions', '')[:500]}..."
+                )
+            else:
+                case_brief = (
+                    "Clinical consultation case. Assess the candidate's "
+                    "data gathering, clinical management, and interpersonal skills."
+                )
             
             feedback = await generate_feedback(transcript, case_brief)
             
-            # Store feedback
-            self.feedback_results[session_id] = feedback.model_dump()
+            # Store feedback locally
+            feedback_dict = feedback.model_dump()
+            self.feedback_results[session_id] = feedback_dict
             
             logger.info(f"Session {session_id}: Feedback generated")
+            
+            # Save feedback to database
+            db_info = self.db_sessions.get(session_id, {})
+            if db_info.get('db_session_id') and self.db_repo:
+                try:
+                    # Transform feedback to match database schema
+                    db_feedback = {
+                        'data_gathering': {
+                            'score': feedback_dict.get('data_gathering', {}).get('score', 0),
+                            'strengths': feedback_dict.get('data_gathering', {}).get('strengths', []),
+                            'improvements': feedback_dict.get('data_gathering', {}).get('areas_for_improvement', [])
+                        },
+                        'clinical_management': {
+                            'score': feedback_dict.get('clinical_management', {}).get('score', 0),
+                            'strengths': feedback_dict.get('clinical_management', {}).get('strengths', []),
+                            'improvements': feedback_dict.get('clinical_management', {}).get('areas_for_improvement', [])
+                        },
+                        'interpersonal_skills': {
+                            'score': feedback_dict.get('relating_to_others', {}).get('score', 0),
+                            'strengths': feedback_dict.get('relating_to_others', {}).get('strengths', []),
+                            'improvements': feedback_dict.get('relating_to_others', {}).get('areas_for_improvement', [])
+                        },
+                        'overall_summary': feedback_dict.get('summary', ''),
+                        'key_learning_points': feedback_dict.get('key_learning_points', [])
+                    }
+                    self.db_repo.save_feedback(db_info['db_session_id'], db_feedback)
+                    
+                    # Update domain progress if station has a domain
+                    station_data = db_info.get('station_data', {})
+                    if db_info.get('user_id') and station_data.get('domain_id'):
+                        overall_score = (
+                            db_feedback['data_gathering']['score'] +
+                            db_feedback['clinical_management']['score'] +
+                            db_feedback['interpersonal_skills']['score']
+                        ) // 3
+                        passed = all([
+                            db_feedback['data_gathering']['score'] >= 60,
+                            db_feedback['clinical_management']['score'] >= 60,
+                            db_feedback['interpersonal_skills']['score'] >= 60
+                        ])
+                        self.db_repo.update_domain_progress(
+                            db_info['user_id'],
+                            station_data['domain_id'],
+                            overall_score,
+                            passed
+                        )
+                except Exception as e:
+                    logger.error(f"Session {session_id}: Failed to save feedback to database - {e}")
             
             # Try to notify client if still connected
             websocket = self.websockets.get(session_id)

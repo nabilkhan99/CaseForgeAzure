@@ -35,7 +35,12 @@ class ClinicalMasterSettings(BaseSettings):
     AZURE_OPENAI_CHAT_API_KEY: str = ""  # Chat deployment key (if different from primary)
     
     # Session Configuration
-    CONSULTATION_DURATION_SECONDS: int = 120  # 2 minutes for testing
+    CONSULTATION_DURATION_SECONDS: int = 300  # 5 minutes for consultation
+    READING_DURATION_SECONDS: int = 180  # 3 minutes for reading
+    
+    # Supabase Configuration
+    SUPABASE_URL: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
     
     # Voice settings (marin or cedar recommended for best quality)
     DEFAULT_VOICE: str = "marin"
