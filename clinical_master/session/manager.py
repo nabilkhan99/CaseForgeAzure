@@ -194,7 +194,7 @@ class SessionManager:
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {
-                    "model": "whisper-1",
+                    "model": settings.TRANSCRIPTION_MODEL,
                 },
                 "turn_detection": {
                     "type": settings.TURN_DETECTION_TYPE,  # semantic_vad recommended

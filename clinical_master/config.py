@@ -54,6 +54,11 @@ class ClinicalMasterSettings(BaseSettings):
     # Noise reduction settings (near_field for typical microphone use, far_field for speaker)
     NOISE_REDUCTION_TYPE: str = "near_field"
     
+    # Transcription model for Realtime sessions
+    # gpt-4o-transcribe provides better alignment with what the conversation model understands
+    # Options: "whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"
+    TRANSCRIPTION_MODEL: str = "gpt-4o-transcribe"
+    
     class Config:
         env_file = str(_env_file)
         env_file_encoding = "utf-8"
