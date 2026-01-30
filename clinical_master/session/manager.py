@@ -22,12 +22,12 @@ from agents.realtime.config import RealtimeUserInputMessage
 # Handle imports for both package and script modes
 try:
     from ..config import settings
-    from ..agents.patient import get_patient_agent
+    from ..ai_agents.patient import get_patient_agent
     from ..db import SessionRepository
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from clinical_master.config import settings
-    from clinical_master.agents.patient import get_patient_agent
+    from clinical_master.ai_agents.patient import get_patient_agent
     from clinical_master.db import SessionRepository
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,10 @@ class SessionManager:
         self.feedback_results: dict[str, dict] = {}
         # Database session info: { session_id: { db_session_id, user_id, station_id, station_data } }
         self.db_sessions: dict[str, dict] = {}
+        # Track seen item_ids per session for deduplication (SDK pattern)
+        self.seen_item_ids: dict[str, set[str]] = {}
+        # Map item_id to transcript content for updates
+        self.item_transcripts: dict[str, dict[str, dict]] = {}
         # Initialize repository (will be lazy-loaded to avoid startup errors)
         self._db_repo: SessionRepository | None = None
     
@@ -109,6 +113,13 @@ class SessionManager:
         await websocket.accept()
         self.websockets[session_id] = websocket
         self.transcripts[session_id] = []
+        self.seen_item_ids[session_id] = set()  # Track seen item_ids for deduplication
+        self.item_transcripts[session_id] = {}  # Map item_id -> transcript data
+        
+        # Delta accumulator buffers for streaming transcripts
+        # Each role accumulates text until a turn boundary
+        self.delta_buffers = getattr(self, 'delta_buffers', {})
+        self.delta_buffers[session_id] = {"user": "", "assistant": ""}
         
         logger.info(f"Session {session_id}: Connection accepted")
         
@@ -145,12 +156,13 @@ class SessionManager:
             'station_data': station_data
         }
         
-        # Get patient agent
-        agent = get_patient_agent()
+        # Get patient agent with station-specific prompt
+        agent = get_patient_agent(station_data)
         runner = RealtimeRunner(agent)
         
         # Build Azure OpenAI WebSocket URL for Realtime API
-        # Format: wss://{resource}.openai.azure.com/openai/realtime?api-version={version}&deployment={deployment}
+        # GA Format: wss://{resource}.openai.azure.com/openai/v1/realtime?model={deployment}
+        # Preview Format: wss://{resource}.openai.azure.com/openai/realtime?api-version={version}&deployment={deployment}
         azure_endpoint = settings.AZURE_OPENAI_ENDPOINT.rstrip('/')
         # Convert https:// to wss://
         if azure_endpoint.startswith('https://'):
@@ -160,39 +172,37 @@ class SessionManager:
         else:
             ws_endpoint = f"wss://{azure_endpoint}"
         
+        # Use GA endpoint format (no api-version required)
         azure_url = (
-            f"{ws_endpoint}/openai/realtime"
-            f"?api-version={settings.AZURE_OPENAI_REALTIME_API_VERSION}"
-            f"&deployment={settings.AZURE_OPENAI_REALTIME_DEPLOYMENT}"
+            f"{ws_endpoint}/openai/v1/realtime"
+            f"?model={settings.AZURE_OPENAI_REALTIME_DEPLOYMENT}"
         )
         
         logger.info(f"Session {session_id}: Connecting to Azure OpenAI at {azure_url}")
         
         # Configure for Azure OpenAI with custom URL and headers
-        # Using GA API format per OpenAI Realtime API documentation
+        # Using openai-agents SDK with Azure OpenAI
         model_config = {
             "url": azure_url,
             "headers": {
                 "api-key": settings.AZURE_OPENAI_API_KEY,
             },
             "initial_model_settings": {
-                "type": "realtime",  # Required for GA API
-                "model": settings.AZURE_OPENAI_REALTIME_DEPLOYMENT,
-                "audio": {
-                    "input": {
-                        "format": {"type": "audio/pcm", "rate": 24000},
-                        "turn_detection": {
-                            "type": settings.TURN_DETECTION_TYPE,  # semantic_vad recommended
-                            "create_response": True,
-                            "interrupt_response": True,
-                        },
-                        "noise_reduction": {"type": settings.NOISE_REDUCTION_TYPE},
-                        "transcription": {"model": "whisper-1"},
-                    },
-                    "output": {
-                        "format": {"type": "audio/pcm"},
-                        "voice": settings.DEFAULT_VOICE,
-                    },
+                # Azure OpenAI only supports ['audio'] or ['text'], not both together
+                "modalities": ["audio"],
+                "voice": settings.DEFAULT_VOICE,
+                "input_audio_format": "pcm16",
+                "output_audio_format": "pcm16",
+                "input_audio_transcription": {
+                    "model": "whisper-1",
+                },
+                "turn_detection": {
+                    "type": settings.TURN_DETECTION_TYPE,  # semantic_vad recommended
+                    "create_response": True,
+                    "interrupt_response": True,
+                },
+                "input_audio_noise_reduction": {
+                    "type": settings.NOISE_REDUCTION_TYPE
                 },
             },
         }
@@ -236,19 +246,21 @@ class SessionManager:
             self.timers[session_id].cancel()
             del self.timers[session_id]
         
-        # Close realtime session
-        if session_id in self.session_contexts:
+        # Close realtime session - use pop to avoid race conditions
+        context = self.session_contexts.pop(session_id, None)
+        if context:
             try:
-                await self.session_contexts[session_id].__aexit__(None, None, None)
+                await context.__aexit__(None, None, None)
             except Exception as e:
                 logger.error(f"Session {session_id}: Error closing context - {e}")
-            del self.session_contexts[session_id]
         
-        if session_id in self.active_sessions:
-            del self.active_sessions[session_id]
-        
-        if session_id in self.websockets:
-            del self.websockets[session_id]
+        # Clean up all session data using pop() to avoid KeyErrors on double-disconnect
+        self.active_sessions.pop(session_id, None)
+        self.websockets.pop(session_id, None)
+        self.seen_item_ids.pop(session_id, None)
+        self.item_transcripts.pop(session_id, None)
+        if hasattr(self, 'delta_buffers'):
+            self.delta_buffers.pop(session_id, None)
     
     async def send_audio(self, session_id: str, audio_bytes: bytes):
         """Send audio data to the realtime session."""
@@ -266,6 +278,30 @@ class SessionManager:
         """End the consultation early (before timer)."""
         await self._on_timer_end(session_id)
     
+    def _flush_delta_buffer(self, session_id: str, role: str):
+        """Flush accumulated delta buffer for a role to transcripts list."""
+        if session_id not in self.delta_buffers:
+            return
+        
+        buffer = self.delta_buffers[session_id]
+        content = buffer.get(role, "").strip()
+        
+        if content:
+            logger.info(f"Session {session_id}: Flushing {role} buffer: {content[:50]}...")
+            self.transcripts[session_id].append({
+                "role": role,
+                "content": content,
+                "timestamp": datetime.now().isoformat(),
+            })
+            # Clear the buffer
+            buffer[role] = ""
+    
+    def _flush_all_delta_buffers(self, session_id: str):
+        """Flush all remaining delta buffers before saving."""
+        # Flush user first, then assistant (typical conversation order)
+        self._flush_delta_buffer(session_id, "user")
+        self._flush_delta_buffer(session_id, "assistant")
+    
     async def _on_timer_end(self, session_id: str):
         """Called when timer expires or consultation ends."""
         logger.info(f"Session {session_id}: Consultation ended")
@@ -277,8 +313,15 @@ class SessionManager:
                 "message": "Time's up! Generating feedback...",
             }))
         
+        # Flush any remaining delta buffers before saving
+        self._flush_all_delta_buffers(session_id)
+        
         # Save transcript to database
         transcript = self.transcripts.get(session_id, [])
+        logger.info(f"Session {session_id}: Transcript has {len(transcript)} items")
+        for i, t in enumerate(transcript[:5]):  # Log first 5 items
+            logger.info(f"Session {session_id}: Transcript[{i}] role={t.get('role')}, content={t.get('content', '')[:50]}...")
+        
         db_info = self.db_sessions.get(session_id, {})
         if db_info.get('db_session_id') and self.db_repo:
             try:
@@ -342,75 +385,134 @@ class SessionManager:
             pass
             
         elif event.type == "history_added":
-            # Capture transcript
+            # Capture transcript - SDK authoritative source for new items
+            # Uses item_id-based deduplication following SDK best practices
             try:
                 item = event.item
-                content = self._extract_content(item)
+                item_id = getattr(item, "item_id", None)
                 role = getattr(item, "role", "unknown")
                 
-                # Log for debugging
-                logger.info(f"Session {session_id}: history_added - role={role}, content_length={len(content) if content else 0}")
+                # Extract transcript from content parts (SDK pattern)
+                content = self._extract_transcript_from_item(item)
                 
-                if content:
-                    self.transcripts[session_id].append({
-                        "role": role,
-                        "content": content,
-                        "timestamp": datetime.now().isoformat(),
-                    })
-                    event_data["item"] = {"role": role, "content": content}
-                else:
-                    # Still send the event but with empty content
-                    event_data["item"] = {"role": role, "content": ""}
+                # Log for debugging
+                logger.info(f"Session {session_id}: history_added - item_id={item_id}, role={role}, content_length={len(content) if content else 0}")
+                
+                # Only process if we haven't seen this item_id before
+                if item_id and item_id not in self.seen_item_ids[session_id]:
+                    self.seen_item_ids[session_id].add(item_id)
+                    
+                    if content:
+                        # Store in item_transcripts for potential updates
+                        self.item_transcripts[session_id][item_id] = {
+                            "role": role,
+                            "content": content,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        # Add to final transcripts list
+                        self.transcripts[session_id].append(self.item_transcripts[session_id][item_id])
+                        event_data["item"] = {"role": role, "content": content, "id": item_id}
+                    else:
+                        # Item exists but no transcript yet - track it for later update
+                        self.item_transcripts[session_id][item_id] = {
+                            "role": role,
+                            "content": "",
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        event_data["item"] = {"role": role, "content": "", "id": item_id}
+                elif item_id:
+                    # Item already seen, just update event_data for frontend
+                    existing = self.item_transcripts[session_id].get(item_id, {})
+                    event_data["item"] = {"role": role, "content": existing.get("content", ""), "id": item_id}
+                    
             except Exception as e:
-                logger.warning(f"Session {session_id}: Could not extract content - {e}")
+                logger.warning(f"Session {session_id}: Could not extract content in history_added - {e}")
                 
         elif event.type == "history_updated":
             # Content was updated (e.g., transcription completed)
+            # Update existing item by item_id - don't create duplicates
             try:
-                item = event.item
-                content = self._extract_content(item)
-                role = getattr(item, "role", "unknown")
-                item_id = getattr(item, "id", None)
+                item = getattr(event, 'item', None)
+                if item is None:
+                    return
                 
-                logger.info(f"Session {session_id}: history_updated - role={role}, content_length={len(content) if content else 0}")
-                
-                if content:
-                    # Update existing transcript or add new
-                    event_data["item"] = {"role": role, "content": content, "id": item_id}
-                    # Also append to transcript for feedback
-                    self.transcripts[session_id].append({
-                        "role": role,
-                        "content": content,
-                        "timestamp": datetime.now().isoformat(),
-                    })
+                # history_updated contains full history list, not single item
+                # Extract the updated items from the history
+                history = getattr(event, 'history', None)
+                if history:
+                    # Process each item in history for transcript updates
+                    for hist_item in history:
+                        item_id = getattr(hist_item, "item_id", None)
+                        if not item_id:
+                            continue
+                            
+                        role = getattr(hist_item, "role", "unknown")
+                        content = self._extract_transcript_from_item(hist_item)
+                        
+                        if content and item_id in self.item_transcripts[session_id]:
+                            # Update existing transcript if content changed
+                            existing = self.item_transcripts[session_id][item_id]
+                            if existing.get("content") != content:
+                                logger.info(f"Session {session_id}: history_updated - updating item_id={item_id}, role={role}")
+                                existing["content"] = content
+                                # Find and update in transcripts list
+                                for t in self.transcripts[session_id]:
+                                    if t.get("content") == "" and t.get("role") == role:
+                                        t["content"] = content
+                                        break
+                        elif content and item_id not in self.seen_item_ids[session_id]:
+                            # New item from history_updated (shouldn't normally happen)
+                            self.seen_item_ids[session_id].add(item_id)
+                            self.item_transcripts[session_id][item_id] = {
+                                "role": role,
+                                "content": content,
+                                "timestamp": datetime.now().isoformat(),
+                            }
+                            self.transcripts[session_id].append(self.item_transcripts[session_id][item_id])
+                    
+                    # Send update to frontend
+                    event_data["history"] = [{"role": getattr(h, "role", "unknown"), 
+                                              "content": self._extract_transcript_from_item(h),
+                                              "id": getattr(h, "item_id", None)} 
+                                             for h in history if hasattr(h, "role")]
+                                
             except Exception as e:
-                logger.warning(f"Session {session_id}: history_updated error - {e}")
+                logger.debug(f"Session {session_id}: history_updated - {e}")
                 
         elif event.type == "raw_model_event":
-            # Handle raw OpenAI SDK events for transcription
+            # Handle raw OpenAI SDK events for real-time streaming to frontend
+            # Also save COMPLETED transcripts for feedback generation (with deduplication)
             try:
                 raw_event = event.data
                 raw_type = getattr(raw_event, "type", "")
                 
+                # Log all raw event types for debugging
+                if raw_type and "transcript" in raw_type.lower():
+                    logger.info(f"Session {session_id}: raw_model_event type={raw_type}")
+                
                 # Handle input audio transcription (user's speech converted to text)
-                # Support both old SDK and GA API event names
                 if raw_type in ("input_audio_transcription_completed", 
                                "conversation.item.input_audio_transcription.completed"):
                     transcript_text = getattr(raw_event, "transcript", "")
+                    item_id = getattr(raw_event, "item_id", None)
                     if transcript_text:
-                        logger.info(f"Session {session_id}: User transcription: {transcript_text[:100]}...")
-                        self.transcripts[session_id].append({
-                            "role": "user",
-                            "content": transcript_text,
-                            "timestamp": datetime.now().isoformat(),
-                        })
-                        # Send as transcript item to frontend
+                        logger.info(f"Session {session_id}: User transcription: {transcript_text[:50]}...")
+                        # Send to frontend for real-time display
                         await websocket.send_text(json.dumps({
                             "type": "transcript_update",
                             "item": {"role": "user", "content": transcript_text}
                         }))
+                        # Save for feedback - dedupe by item_id if available, else by content
+                        dedupe_key = item_id or f"user:{transcript_text[:50]}"
+                        if dedupe_key not in self.seen_item_ids.get(session_id, set()):
+                            self.seen_item_ids.setdefault(session_id, set()).add(dedupe_key)
+                            self.transcripts[session_id].append({
+                                "role": "user",
+                                "content": transcript_text,
+                                "timestamp": datetime.now().isoformat(),
+                            })
                 
-                # Handle streaming input transcription delta (GA API)
+                # Handle streaming input transcription delta (GA API) - display only, no save
                 elif raw_type == "conversation.item.input_audio_transcription.delta":
                     delta_text = getattr(raw_event, "delta", "")
                     if delta_text:
@@ -418,51 +520,48 @@ class SessionManager:
                             "type": "transcript_delta",
                             "item": {"role": "user", "content": delta_text}
                         }))
+                        # Accumulate user delta
+                        if session_id in self.delta_buffers:
+                            # If assistant was speaking, flush their buffer first
+                            if self.delta_buffers[session_id]["assistant"]:
+                                self._flush_delta_buffer(session_id, "assistant")
+                            self.delta_buffers[session_id]["user"] += delta_text
                         
                 # Handle partial transcript updates (assistant's speech as text)
-                # Support both old and new GA API event names
                 elif raw_type in ("transcript_delta", "response.output_audio_transcript.delta"):
                     delta_text = getattr(raw_event, "delta", "")
                     if delta_text:
-                        # Send delta to frontend for real-time display
                         await websocket.send_text(json.dumps({
                             "type": "transcript_delta",
                             "item": {"role": "assistant", "content": delta_text}
                         }))
+                        # Accumulate assistant delta
+                        if session_id in self.delta_buffers:
+                            # If user was speaking, flush their buffer first
+                            if self.delta_buffers[session_id]["user"]:
+                                self._flush_delta_buffer(session_id, "user")
+                            self.delta_buffers[session_id]["assistant"] += delta_text
                 
                 # Handle completed assistant transcript (GA API event name)
                 elif raw_type == "response.output_audio_transcript.done":
                     transcript_text = getattr(raw_event, "transcript", "")
+                    item_id = getattr(raw_event, "item_id", None)
                     if transcript_text:
-                        logger.info(f"Session {session_id}: Assistant transcript: {transcript_text[:100]}...")
-                        self.transcripts[session_id].append({
-                            "role": "assistant",
-                            "content": transcript_text,
-                            "timestamp": datetime.now().isoformat(),
-                        })
-                        # Send completed transcript to frontend
+                        logger.info(f"Session {session_id}: Assistant transcript: {transcript_text[:50]}...")
+                        # Send to frontend for real-time display
                         await websocket.send_text(json.dumps({
                             "type": "transcript_update",
                             "item": {"role": "assistant", "content": transcript_text}
                         }))
-                        
-                # Handle item updates which may contain transcripts
-                elif raw_type == "item_updated":
-                    item = getattr(raw_event, "item", None)
-                    if item:
-                        content = self._extract_content(item)
-                        role = getattr(item, "role", "unknown")
-                        if content and role in ("user", "assistant"):
-                            logger.info(f"Session {session_id}: item_updated - role={role}, content={content[:100]}...")
+                        # Save for feedback - dedupe by item_id if available, else by content
+                        dedupe_key = item_id or f"assistant:{transcript_text[:50]}"
+                        if dedupe_key not in self.seen_item_ids.get(session_id, set()):
+                            self.seen_item_ids.setdefault(session_id, set()).add(dedupe_key)
                             self.transcripts[session_id].append({
-                                "role": role,
-                                "content": content,
+                                "role": "assistant",
+                                "content": transcript_text,
                                 "timestamp": datetime.now().isoformat(),
                             })
-                            await websocket.send_text(json.dumps({
-                                "type": "transcript_update",
-                                "item": {"role": role, "content": content}
-                            }))
                         
             except Exception as e:
                 logger.debug(f"Session {session_id}: raw_model_event processing - {e}")
@@ -481,7 +580,25 @@ class SessionManager:
             event_data["output"] = str(event.output)
             
         elif event.type == "error":
-            event_data["error"] = str(getattr(event, "error", "Unknown error"))
+            # Extract a meaningful error message
+            error_obj = getattr(event, "error", None)
+            if error_obj and hasattr(error_obj, "message"):
+                error_message = error_obj.message
+            else:
+                error_message = str(error_obj) if error_obj else "Unknown error"
+            
+            logger.error(f"Session {session_id}: Error event received - {error_message}")
+            logger.error(f"Session {session_id}: Full error event: {event}")
+            
+            # Don't send recoverable errors to frontend - they cause unnecessary UI disruption
+            recoverable_errors = ["Audio content", "already shorter", "truncate"]
+            is_recoverable = any(phrase in error_message for phrase in recoverable_errors)
+            
+            if not is_recoverable:
+                event_data["error"] = error_message
+            else:
+                logger.warning(f"Session {session_id}: Recoverable error ignored for UI: {error_message}")
+                return  # Don't send to frontend
         
         # Send event to client
         await websocket.send_text(json.dumps(event_data))
@@ -500,23 +617,63 @@ class SessionManager:
             for part in content:
                 if isinstance(part, dict):
                     if part.get("type") == "text":
-                        texts.append(part.get("text", ""))
+                        text = part.get("text")
+                        if text:
+                            texts.append(text)
                     elif part.get("type") == "transcript":
-                        texts.append(part.get("transcript", ""))
-                elif hasattr(part, "text"):
+                        transcript = part.get("transcript")
+                        if transcript:
+                            texts.append(transcript)
+                elif hasattr(part, "text") and part.text:
                     texts.append(part.text)
-                elif hasattr(part, "transcript"):
+                elif hasattr(part, "transcript") and part.transcript:
                     texts.append(part.transcript)
-            return " ".join(texts)
+            # Filter out any None values before joining
+            return " ".join(t for t in texts if t)
         
         return str(content)
+    
+    def _extract_transcript_from_item(self, item) -> str:
+        """Extract transcript content from a RealtimeItem following SDK pattern.
+        
+        Looks for the 'transcript' field in content parts (InputAudio, AssistantAudio types).
+        Falls back to _extract_content for text-based content.
+        """
+        content = getattr(item, "content", None)
+        if not content:
+            return ""
+        
+        if isinstance(content, list):
+            transcripts = []
+            for part in content:
+                # Check for transcript field (SDK InputAudio/AssistantAudio pattern)
+                if hasattr(part, "transcript") and part.transcript:
+                    transcripts.append(part.transcript)
+                elif isinstance(part, dict):
+                    transcript = part.get("transcript")
+                    if transcript:
+                        transcripts.append(transcript)
+                    # Also check for text fallback
+                    elif part.get("type") in ("text", "input_text"):
+                        text = part.get("text")
+                        if text:
+                            transcripts.append(text)
+                # Check for text-based content as fallback
+                elif hasattr(part, "text") and part.text:
+                    transcripts.append(part.text)
+            
+            if transcripts:
+                return " ".join(t for t in transcripts if t)
+        
+        # Fallback to regular content extraction
+        return self._extract_content(item)
     
     async def _generate_feedback(self, session_id: str, transcript: list[dict]):
         """Generate feedback asynchronously."""
         try:
-            from ..agents.feedback import generate_feedback
+            from ..ai_agents.feedback import generate_feedback
         except ImportError:
-            from clinical_master.agents.feedback import generate_feedback
+            from clinical_master.ai_agents.feedback import generate_feedback
         
         try:
             logger.info(f"Session {session_id}: Generating feedback...")

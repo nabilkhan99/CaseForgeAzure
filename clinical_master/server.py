@@ -81,16 +81,19 @@ async def websocket_test(websocket: WebSocket):
 
 
 @app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
+async def websocket_endpoint(websocket: WebSocket, session_id: str, station_id: str = None):
     """
     WebSocket endpoint for realtime voice sessions.
+    
+    Query Parameters:
+    - station_id: Optional station ID to load case-specific prompts
     
     Audio Protocol:
     - Client sends: JSON messages with type "audio" containing int16 array
     - Server sends: JSON messages with audio bytes or event data
     """
-    logger.info(f"WebSocket connection request for session: {session_id}")
-    await session_manager.connect(websocket, session_id)
+    logger.info(f"WebSocket connection request for session: {session_id}, station: {station_id}")
+    await session_manager.connect(websocket, session_id, station_id=station_id)
     
     try:
         while True:
