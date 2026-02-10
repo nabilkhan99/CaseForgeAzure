@@ -59,6 +59,12 @@ class ClinicalMasterSettings(BaseSettings):
     # Options: "whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"
     TRANSCRIPTION_MODEL: str = "gpt-4o-transcribe"
     
+    # OpenAI Direct API (for aligned user transcription)
+    # Since Azure Realtime doesn't support gpt-4o-transcribe for input_audio_transcription,
+    # we use OpenAI Direct in parallel for user transcription
+    OPENAI_API_KEY: str = ""
+    OPENAI_TRANSCRIPTION_MODEL: str = "gpt-4o-transcribe"
+    
     class Config:
         env_file = str(_env_file)
         env_file_encoding = "utf-8"

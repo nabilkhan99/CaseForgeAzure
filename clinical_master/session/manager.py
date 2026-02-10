@@ -19,6 +19,12 @@ from fastapi import WebSocket
 from agents.realtime import RealtimeRunner, RealtimeSession
 from agents.realtime.config import RealtimeUserInputMessage
 
+# Conditional import for transcription client
+try:
+    from .transcription_client import OpenAITranscriptionClient
+except ImportError:
+    from clinical_master.session.transcription_client import OpenAITranscriptionClient
+
 # Handle imports for both package and script modes
 try:
     from ..config import settings
@@ -87,6 +93,10 @@ class SessionManager:
         self.seen_item_ids: dict[str, set[str]] = {}
         # Map item_id to transcript content for updates
         self.item_transcripts: dict[str, dict[str, dict]] = {}
+        # OpenAI Direct transcription clients (for aligned user transcription)
+        self.transcription_clients: dict[str, OpenAITranscriptionClient] = {}
+        # User transcript buffer (from OpenAI transcription)
+        self.user_transcript_buffer: dict[str, str] = {}
         # Initialize repository (will be lazy-loaded to avoid startup errors)
         self._db_repo: SessionRepository | None = None
     
@@ -194,7 +204,9 @@ class SessionManager:
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {
-                    "model": settings.TRANSCRIPTION_MODEL,
+                    # Always use whisper-1 for Azure (gpt-4o-transcribe not supported)
+                    # Primary user transcription comes from OpenAI Direct when configured
+                    "model": "whisper-1",
                 },
                 "turn_detection": {
                     "type": settings.TURN_DETECTION_TYPE,  # semantic_vad recommended
@@ -219,6 +231,27 @@ class SessionManager:
             timer = ConsultationTimer(settings.CONSULTATION_DURATION_SECONDS)
             timer.start(lambda: self._on_timer_end(session_id))
             self.timers[session_id] = timer
+            
+            # Initialize OpenAI transcription client for aligned user transcription
+            # This runs in parallel with Azure Realtime, using same audio
+            if settings.OPENAI_API_KEY:
+                self.user_transcript_buffer[session_id] = ""
+                transcription_client = OpenAITranscriptionClient(
+                    api_key=settings.OPENAI_API_KEY,
+                    model=settings.OPENAI_TRANSCRIPTION_MODEL
+                )
+                connected = await transcription_client.connect(
+                    session_id=session_id,
+                    on_delta=lambda d, sid=session_id: self._on_openai_transcript_delta(sid, d),
+                    on_done=lambda t, sid=session_id: self._on_openai_transcript_done(sid, t)
+                )
+                if connected:
+                    self.transcription_clients[session_id] = transcription_client
+                    logger.info(f"Session {session_id}: OpenAI transcription client ready")
+                else:
+                    logger.warning(f"Session {session_id}: OpenAI transcription not available, falling back to Azure")
+            else:
+                logger.info(f"Session {session_id}: No OPENAI_API_KEY, using Azure transcription only")
             
             # Notify client that session is ready
             await websocket.send_text(json.dumps({
@@ -259,14 +292,26 @@ class SessionManager:
         self.websockets.pop(session_id, None)
         self.seen_item_ids.pop(session_id, None)
         self.item_transcripts.pop(session_id, None)
+        self.user_transcript_buffer.pop(session_id, None)
         if hasattr(self, 'delta_buffers'):
             self.delta_buffers.pop(session_id, None)
+        
+        # Clean up OpenAI transcription client
+        transcription = self.transcription_clients.pop(session_id, None)
+        if transcription:
+            await transcription.disconnect()
     
     async def send_audio(self, session_id: str, audio_bytes: bytes):
-        """Send audio data to the realtime session."""
+        """Send audio data to the realtime session and parallel transcription."""
+        # Send to Azure for conversation
         session = self.active_sessions.get(session_id)
         if session:
             await session.send_audio(audio_bytes)
+        
+        # Send to OpenAI for parallel transcription (if configured)
+        transcription = self.transcription_clients.get(session_id)
+        if transcription and transcription.is_connected:
+            await transcription.send_audio(audio_bytes)
     
     async def interrupt(self, session_id: str):
         """Interrupt current model response."""
@@ -277,6 +322,58 @@ class SessionManager:
     async def end_consultation(self, session_id: str):
         """End the consultation early (before timer)."""
         await self._on_timer_end(session_id)
+    
+    async def _on_openai_transcript_delta(self, session_id: str, delta: str):
+        """
+        Handle streaming transcription delta from OpenAI.
+        
+        This provides real-time user transcript updates to the frontend.
+        """
+        # Accumulate in buffer
+        if session_id in self.user_transcript_buffer:
+            self.user_transcript_buffer[session_id] += delta
+        
+        # Send delta to frontend for real-time display
+        websocket = self.websockets.get(session_id)
+        if websocket:
+            try:
+                await websocket.send_text(json.dumps({
+                    "type": "transcript_delta",
+                    "item": {"role": "user", "content": delta}
+                }))
+            except Exception as e:
+                logger.debug(f"Session {session_id}: Error sending transcript delta - {e}")
+    
+    async def _on_openai_transcript_done(self, session_id: str, transcript: str):
+        """
+        Handle completed user transcription from OpenAI.
+        
+        This is the "gold" transcript that gets saved for feedback generation.
+        """
+        logger.info(f"Session {session_id}: OpenAI user transcript: {transcript[:50]}...")
+        
+        # Clear the buffer
+        if session_id in self.user_transcript_buffer:
+            self.user_transcript_buffer[session_id] = ""
+        
+        # Save for feedback - this is the aligned transcript
+        self.transcripts[session_id].append({
+            "role": "user",
+            "content": transcript,
+            "timestamp": datetime.now().isoformat(),
+            "source": "openai_transcribe",  # Mark source for debugging
+        })
+        
+        # Send completed transcript to frontend
+        websocket = self.websockets.get(session_id)
+        if websocket:
+            try:
+                await websocket.send_text(json.dumps({
+                    "type": "transcript_update",
+                    "item": {"role": "user", "content": transcript}
+                }))
+            except Exception as e:
+                logger.debug(f"Session {session_id}: Error sending transcript update - {e}")
     
     def _flush_delta_buffer(self, session_id: str, role: str):
         """Flush accumulated delta buffer for a role to transcripts list."""
@@ -487,8 +584,13 @@ class SessionManager:
                 raw_type = getattr(raw_event, "type", "")
                 
                 # Log all raw event types for debugging
-                if raw_type and "transcript" in raw_type.lower():
-                    logger.info(f"Session {session_id}: raw_model_event type={raw_type}")
+                if raw_type and ("transcript" in raw_type.lower() or "input" in raw_type.lower()):
+                    # Log extra attributes to debug user vs assistant transcription
+                    content_index = getattr(raw_event, "content_index", None)
+                    item_id = getattr(raw_event, "item_id", None)
+                    response_id = getattr(raw_event, "response_id", None)
+                    logger.info(f"Session {session_id}: raw_model_event type={raw_type}, "
+                               f"content_index={content_index}, item_id={item_id}, response_id={response_id}")
                 
                 # Handle input audio transcription (user's speech converted to text)
                 if raw_type in ("input_audio_transcription_completed", 
