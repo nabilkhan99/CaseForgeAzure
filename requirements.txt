@@ -19,6 +19,7 @@ python-dotenv
 python-multipart
 aiohttp
 websockets
+httpx
 
 # Database
 supabase>=2.0.0
