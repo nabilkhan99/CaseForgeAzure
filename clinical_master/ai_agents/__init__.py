@@ -1,7 +1,6 @@
 # AI Agents module
 # Configure Azure OpenAI client for text agents (feedback) so the SDK targets Azure
 from openai import AsyncAzureOpenAI
-# Now that folder is renamed to ai_agents, we can safely import from agents SDK
 from agents import set_default_openai_client, set_default_openai_api, set_tracing_disabled
 
 from ..config import settings
@@ -24,7 +23,6 @@ _azure_client = AsyncAzureOpenAI(
 )
 set_default_openai_client(_azure_client)
 
-from .patient import get_patient_agent, PATIENT_PROMPT
 from .feedback import feedback_agent, generate_feedback
 
-__all__ = ["get_patient_agent", "PATIENT_PROMPT", "feedback_agent", "generate_feedback"]
+__all__ = ["feedback_agent", "generate_feedback"]

@@ -1,0 +1,20 @@
+# Clinical Master - Python Dependencies
+# Separate from root requirements.txt (which has Azure Functions deps)
+
+# Web framework
+fastapi
+uvicorn[standard]
+pydantic>=2.10
+pydantic-settings
+
+# AI (feedback generation via Azure OpenAI)
+openai-agents>=0.1.0
+
+# HTTP client (ElevenLabs transcript fetch)
+httpx
+
+# Utils
+python-dotenv
+
+# Database
+supabase>=2.0.0
