@@ -110,7 +110,13 @@ def _normalise_content_types(obj):
 
 
 def _apply_azure_compat_patch():
-    """Monkey-patch the SDK to accept Azure GA API responses."""
+    """Monkey-patch the SDK to accept Azure GA API responses.
+
+    The Azure OpenAI GA Realtime API (gpt-realtime 2025-08-28) changed several
+    event names, content types, and session object structures compared to the
+    preview API that the openai-agents SDK was built against.
+    See: https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/realtime-audio
+    """
     global _AZURE_PATCH_APPLIED
     if _AZURE_PATCH_APPLIED:
         return
@@ -130,13 +136,13 @@ def _apply_azure_compat_patch():
             # 0. Rewrite GA event types → preview equivalents
             if event_type in _EVENT_TYPE_MAP:
                 new_type = _EVENT_TYPE_MAP[event_type]
-                logger.info(f"Azure compat: rewriting event '{event_type}' → '{new_type}'")
+                logger.debug(f"Azure compat: rewriting event '{event_type}' → '{new_type}'")
                 event["type"] = new_type
                 event_type = new_type
 
             # 1. Skip event types the SDK doesn't know about
             if event_type and event_type not in _SDK_KNOWN_EVENTS:
-                logger.info(f"Azure compat: skipping unknown event type '{event_type}'")
+                logger.debug(f"Azure compat: skipping unknown event type '{event_type}'")
                 return
 
             # 2. Normalise session.created / session.updated
@@ -491,7 +497,7 @@ class SessionManager:
         if event.type == "audio":
             # Send audio to browser
             event_data["audio"] = base64.b64encode(event.audio.data).decode("utf-8")
-            logger.info(f"Session {session_id}: Audio chunk {len(event.audio.data)} bytes")
+            logger.debug(f"Session {session_id}: Audio chunk {len(event.audio.data)} bytes")
             
         elif event.type == "audio_interrupted":
             # Audio was interrupted by user speech
