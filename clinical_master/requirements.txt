@@ -7,11 +7,11 @@ uvicorn[standard]
 pydantic>=2.10
 pydantic-settings
 
-# AI (feedback generation via Azure OpenAI)
+# AI (realtime patient agent + feedback generation via Azure OpenAI)
 openai-agents>=0.1.0
 
-# HTTP client (ElevenLabs transcript fetch)
-httpx
+# WebSocket client (used by agents.realtime for Azure OpenAI connection)
+websockets
 
 # Utils
 python-dotenv

@@ -24,5 +24,6 @@ _azure_client = AsyncAzureOpenAI(
 set_default_openai_client(_azure_client)
 
 from .feedback import feedback_agent, generate_feedback
+from .patient import get_patient_agent, build_patient_prompt
 
-__all__ = ["feedback_agent", "generate_feedback"]
+__all__ = ["feedback_agent", "generate_feedback", "get_patient_agent", "build_patient_prompt"]

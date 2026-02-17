@@ -1,7 +1,7 @@
 """
 Clinical Master Configuration
 
-Environment variables for ElevenLabs, Azure OpenAI (feedback), and session settings.
+Environment variables for Azure OpenAI (Realtime + Chat/feedback) and session settings.
 """
 
 import os
@@ -19,34 +19,36 @@ if not _env_file.exists():
 
 
 class ClinicalMasterSettings(BaseSettings):
-    """Configuration for Clinical Master voice agent."""
+    """Configuration for the Clinical Master service."""
     
-    # ── ElevenLabs Configuration ──
-    ELEVENLABS_API_KEY: str = ""
-    ELEVENLABS_AGENT_ID: str = ""
-    
-    # ── Azure OpenAI Configuration (for feedback generation only) ──
+    # Azure OpenAI - Shared endpoint & key
     AZURE_OPENAI_ENDPOINT: str = ""
     AZURE_OPENAI_API_KEY: str = ""
     
-    # Chat Completions API (used by feedback agent)
+    # Azure OpenAI - Realtime (patient voice agent) — uses GA endpoint format (no api-version needed)
+    AZURE_OPENAI_REALTIME_DEPLOYMENT: str = "gpt-realtime"
+    DEFAULT_VOICE: str = "shimmer"
+    TURN_DETECTION_TYPE: str = "semantic_vad"
+    NOISE_REDUCTION_TYPE: str = "near_field"
+    
+    # Azure OpenAI - Chat Completions (feedback generation)
     AZURE_OPENAI_CHAT_DEPLOYMENT: str = "gpt-4.1"
     AZURE_OPENAI_CHAT_API_VERSION: str = "2024-12-01-preview"
-    AZURE_OPENAI_CHAT_API_KEY: str = ""
+    AZURE_OPENAI_CHAT_API_KEY: Optional[str] = None  # Falls back to AZURE_OPENAI_API_KEY
     
-    # ── Session Configuration ──
-    CONSULTATION_DURATION_SECONDS: int = 300  # 5 minutes for consultation
-    READING_DURATION_SECONDS: int = 180  # 3 minutes for reading
+    # Session settings
+    CONSULTATION_DURATION_SECONDS: int = 300
+    READING_DURATION_SECONDS: int = 180
     
-    # ── Supabase Configuration ──
+    # Supabase
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     
-    class Config:
-        env_file = str(_env_file)
-        env_file_encoding = "utf-8"
-        extra = "ignore"
+    model_config = {
+        "env_file": str(_env_file),
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
 
-# Singleton instance
 settings = ClinicalMasterSettings()
