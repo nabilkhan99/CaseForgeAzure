@@ -1,15 +1,25 @@
 """
 Patient Agent
 
-Realtime voice agent that simulates a patient for SCA exam practice.
+ADK Gemini Live agent that simulates a patient for SCA exam practice.
 Dynamically loads case-specific prompts from station data.
 
-Prompt structure follows the OpenAI Realtime Prompt Guide:
+Prompt structure follows best practices:
   Role → Personality → Context → Instructions → Conversation Flow → Safety
 """
 
+import sys
+from pathlib import Path
 from typing import Optional, Dict, Any
-from agents.realtime import RealtimeAgent
+
+from google.adk.agents import Agent
+
+# Handle imports for both package and script modes
+try:
+    from ..config import settings
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from clinical_master.config import settings
 
 
 # Template with {placeholders} for case-specific injection
@@ -137,9 +147,9 @@ def build_patient_prompt(station_data: Optional[Dict[str, Any]] = None) -> str:
     )
 
 
-def get_patient_agent(station_data: Optional[Dict[str, Any]] = None) -> RealtimeAgent:
+def get_patient_agent(station_data: Optional[Dict[str, Any]] = None) -> Agent:
     """
-    Create and return the patient RealtimeAgent with case-specific instructions.
+    Create and return the patient ADK Agent with case-specific instructions.
 
     Args:
         station_data: Optional dictionary containing station data from database.
@@ -147,7 +157,7 @@ def get_patient_agent(station_data: Optional[Dict[str, Any]] = None) -> Realtime
                      If not provided, uses a default generic patient prompt.
 
     Returns:
-        RealtimeAgent configured for the specific case
+        ADK Agent configured for real-time voice interaction
     """
     prompt = build_patient_prompt(station_data)
 
@@ -159,9 +169,11 @@ def get_patient_agent(station_data: Optional[Dict[str, Any]] = None) -> Realtime
     else:
         print("[PatientAgent] No station data provided, using default prompt")
 
-    return RealtimeAgent(
+    return Agent(
         name="Patient",
-        instructions=prompt,
+        model=settings.GEMINI_LIVE_MODEL,
+        instruction=prompt,
+        description="Simulated patient for SCA consultation practice.",
     )
 
 

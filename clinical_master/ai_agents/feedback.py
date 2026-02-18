@@ -3,12 +3,28 @@ Feedback Agent
 
 Text-based agent that analyzes consultation transcripts
 and generates structured feedback aligned with SCA marking domains.
+
+Uses Gemini via google-genai for single-shot structured output.
 """
 
+import json
+import logging
+import sys
+from pathlib import Path
 from typing import List
+
+from google import genai
+from google.genai import types as genai_types
 from pydantic import BaseModel, Field
 
-from agents import Agent, Runner
+# Handle imports for both package and script modes
+try:
+    from ..config import settings
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from clinical_master.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class DomainScore(BaseModel):
@@ -78,20 +94,22 @@ Use the case-specific marking criteria provided in the input to assess the train
 - Focus on actionable improvements
 - Keep learning points practical and memorable
 - Use the clinical learning points (if provided) to inform key takeaways
+
+# Output Format
+You MUST respond with a single JSON object matching the ConsultationFeedback schema with these exact fields:
+- data_gathering: { domain, score, strengths, improvements }
+- clinical_management: { domain, score, strengths, improvements }
+- interpersonal_skills: { domain, score, strengths, improvements }
+- overall_summary: string
+- key_learning_points: array of strings
 """
-
-
-feedback_agent = Agent(
-    name="Feedback Examiner",
-    instructions=FEEDBACK_PROMPT,
-    output_type=ConsultationFeedback,
-    model="gpt-4.1",  # Use text model, not realtime
-)
 
 
 async def generate_feedback(transcript: List[dict], case_brief: str) -> ConsultationFeedback:
     """
     Generate structured feedback from a consultation transcript.
+    
+    Uses Gemini via google-genai for single-shot structured output generation.
     
     Args:
         transcript: List of {role, content, timestamp} dicts
@@ -100,9 +118,8 @@ async def generate_feedback(transcript: List[dict], case_brief: str) -> Consulta
     Returns:
         ConsultationFeedback with scores and learning points
     """
-    # Format transcript for analysis
+    # Return default feedback if no transcript
     if not transcript:
-        # Return default feedback if no transcript
         return ConsultationFeedback(
             data_gathering=DomainScore(
                 domain="Data Gathering",
@@ -126,6 +143,7 @@ async def generate_feedback(transcript: List[dict], case_brief: str) -> Consulta
             key_learning_points=["Ensure audio is working for next attempt"]
         )
     
+    # Format transcript for analysis
     transcript_text = "\n".join([
         f"[{t.get('timestamp', 'N/A')}] {t.get('role', 'Unknown').upper()}: {t.get('content', '')}" 
         for t in transcript
@@ -133,14 +151,39 @@ async def generate_feedback(transcript: List[dict], case_brief: str) -> Consulta
     ])
     
     prompt = f"""
+{FEEDBACK_PROMPT}
+
 # Case Context
 {case_brief}
 
 # Consultation Transcript
 {transcript_text}
 
-Please analyze this consultation and provide structured feedback.
+Please analyze this consultation and provide structured feedback as JSON.
 """
     
-    result = await Runner.run(feedback_agent, input=prompt)
-    return result.final_output
+    try:
+        client = genai.Client()
+        
+        response = await client.aio.models.generate_content(
+            model=settings.GEMINI_FEEDBACK_MODEL,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ConsultationFeedback,
+                temperature=0.3,
+            ),
+        )
+        
+        return ConsultationFeedback.model_validate_json(response.text)
+        
+    except Exception as e:
+        logger.error(f"Feedback generation error: {e}")
+        # Fall back to parsing response text if structured output fails
+        try:
+            # Try parsing as raw JSON
+            if hasattr(e, '__context__') and hasattr(e.__context__, 'text'):
+                return ConsultationFeedback.model_validate_json(e.__context__.text)
+        except Exception:
+            pass
+        raise

@@ -1,348 +1,77 @@
 """
-Session Manager
+Session Manager — ADK Gemini Live
 
-Manages WebSocket sessions, realtime connections to Azure OpenAI,
-transcript capture, and timer enforcement.
+Manages real-time voice consultation sessions using Google ADK's
+bidirectional streaming (Runner.run_live + LiveRequestQueue).
+
+Architecture:
+  WebSocket ←→ [upstream task] → LiveRequestQueue → Runner.run_live() → [downstream task] → WebSocket
+                                                                            ↓
+                                                                    TranscriptAccumulation
+                                                                    ConsultationTimer
+                                                                    FeedbackGeneration
+                                                                    DatabasePersistence
 """
 
 import asyncio
 import base64
 import json
 import logging
-import sys
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import WebSocket
+from google.adk.agents.live_request_queue import LiveRequestQueue
+from google.adk.agents.run_config import RunConfig, StreamingMode
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.genai import types
 
-from agents.realtime import RealtimeRunner, RealtimeSession
-
-# Handle imports for both package and script modes
 try:
-    from ..config import settings
     from ..ai_agents.patient import get_patient_agent
-    from ..db import SessionRepository
+    from ..config import settings
+    from ..db.session_repository import SessionRepository
 except ImportError:
+    import sys
+    from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    from clinical_master.config import settings
     from clinical_master.ai_agents.patient import get_patient_agent
-    from clinical_master.db import SessionRepository
-
-
-# ── Azure GA compatibility patch ──────────────────────────────────────────
-# The openai-agents SDK was built against the *preview* Realtime API.
-# Azure's GA API introduces differences that cause pydantic validation
-# failures. This patch normalises raw events before the SDK validates them:
-#
-#  1. Model names: Azure returns e.g. "gpt-realtime-2025-08-28" which isn't
-#     in the SDK's literal list. We map it to "gpt-4o-realtime-preview".
-#
-#  2. New event types: GA adds events like "conversation.item.done" that
-#     don't exist in the SDK's event union. We skip them gracefully.
-#
-#  3. Content type renaming: GA uses "output_audio" where the preview API
-#     used "audio". We rewrite it back to "audio" before validation.
-
-_KNOWN_MODELS = {
-    "gpt-4o-realtime-preview", "gpt-4o-realtime-preview-2024-10-01",
-    "gpt-4o-realtime-preview-2024-12-17", "gpt-4o-realtime-preview-2025-06-03",
-    "gpt-4o-mini-realtime-preview", "gpt-4o-mini-realtime-preview-2024-12-17",
-}
-
-# Event types the SDK can actually validate (from its tagged union).
-# If an event isn't in this set we skip it to avoid validation crashes.
-_SDK_KNOWN_EVENTS = {
-    "conversation.created", "conversation.item.created",
-    "conversation.item.deleted",
-    "conversation.item.input_audio_transcription.completed",
-    "conversation.item.input_audio_transcription.delta",
-    "conversation.item.input_audio_transcription.failed",
-    "conversation.item.retrieved", "conversation.item.truncated",
-    "error",
-    "input_audio_buffer.cleared", "input_audio_buffer.committed",
-    "input_audio_buffer.speech_started", "input_audio_buffer.speech_stopped",
-    "rate_limits.updated",
-    "response.audio.delta", "response.audio.done",
-    "response.audio_transcript.delta", "response.audio_transcript.done",
-    "response.content_part.added", "response.content_part.done",
-    "response.created", "response.done",
-    "response.function_call_arguments.delta",
-    "response.function_call_arguments.done",
-    "response.output_item.added", "response.output_item.done",
-    "response.text.delta", "response.text.done",
-    "session.created", "session.updated",
-    "transcription_session.updated",
-    "output_audio_buffer.started", "output_audio_buffer.stopped",
-    "output_audio_buffer.cleared",
-    "input_audio_buffer.timeout_triggered",
-}
-
-# GA content types that need mapping to preview equivalents
-_CONTENT_TYPE_MAP = {
-    "output_audio": "audio",
-    "output_text": "text",
-}
-
-# GA event types that were renamed from the preview API.
-# We rewrite them back so the SDK can process them normally.
-_EVENT_TYPE_MAP = {
-    "response.output_audio.delta":              "response.audio.delta",
-    "response.output_audio.done":               "response.audio.done",
-    "response.output_audio_transcript.delta":    "response.audio_transcript.delta",
-    "response.output_audio_transcript.done":     "response.audio_transcript.done",
-    "conversation.item.added":                   "conversation.item.created",
-}
-
-_AZURE_PATCH_APPLIED = False
-
-
-def _normalise_content_types(obj):
-    """Recursively rewrite GA content types (output_audio → audio) in dicts/lists."""
-    if isinstance(obj, dict):
-        if "type" in obj and obj["type"] in _CONTENT_TYPE_MAP:
-            obj["type"] = _CONTENT_TYPE_MAP[obj["type"]]
-        for v in obj.values():
-            _normalise_content_types(v)
-    elif isinstance(obj, list):
-        for item in obj:
-            _normalise_content_types(item)
-
-
-def _apply_azure_compat_patch():
-    """Monkey-patch the SDK to accept Azure GA API responses.
-
-    The Azure OpenAI GA Realtime API (gpt-realtime 2025-08-28) changed several
-    event names, content types, and session object structures compared to the
-    preview API that the openai-agents SDK was built against.
-    See: https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/realtime-audio
-    """
-    global _AZURE_PATCH_APPLIED
-    if _AZURE_PATCH_APPLIED:
-        return
-    _AZURE_PATCH_APPLIED = True
-
-    try:
-        from agents.realtime.openai_realtime import OpenAIRealtimeWebSocketModel
-
-        original_handle = OpenAIRealtimeWebSocketModel._handle_ws_event
-
-        async def _patched_handle_ws_event(self, event):
-            if not isinstance(event, dict):
-                return await original_handle(self, event)
-
-            event_type = event.get("type", "")
-
-            # DEBUG: Log ALL incoming events
-            if event_type in ("session.created", "session.updated", "error"):
-                session_data = event.get("session", {})
-                instr = session_data.get("instructions", "NOT_IN_EVENT")
-                if isinstance(instr, str) and len(instr) > 80:
-                    instr = instr[:80] + "..."
-                # Log audio sub-object structure to understand Azure GA nesting
-                audio_obj = session_data.get("audio", {})
-                logger.info(f"INCOMING {event_type}: instructions={instr}, keys={list(session_data.keys()) if session_data else 'N/A'}, audio={audio_obj}")
-                if event_type == "error":
-                    logger.info(f"INCOMING error detail: {event}")
-
-            # 0. Rewrite GA event types → preview equivalents
-            if event_type in _EVENT_TYPE_MAP:
-                new_type = _EVENT_TYPE_MAP[event_type]
-                logger.debug(f"Azure compat: rewriting event '{event_type}' → '{new_type}'")
-                event["type"] = new_type
-                event_type = new_type
-
-            # 1. Skip event types the SDK doesn't know about
-            if event_type and event_type not in _SDK_KNOWN_EVENTS:
-                logger.debug(f"Azure compat: skipping unknown event type '{event_type}'")
-                return
-
-            # 2. Normalise session.created / session.updated
-            if event_type in ("session.created", "session.updated"):
-                session = event.get("session", {})
-                # 2a. Model name
-                model = session.get("model", "")
-                if model and model not in _KNOWN_MODELS:
-                    session["model"] = "gpt-4o-realtime-preview"
-                    logger.info(f"Azure compat: normalised model '{model}' → 'gpt-4o-realtime-preview'")
-                # 2b. Audio format — GA uses nested audio.output.format instead of
-                #     output_audio_format. Ensure the SDK field is populated so the
-                #     ModelAudioTracker doesn't crash with missing _format.
-                if not session.get("output_audio_format"):
-                    session["output_audio_format"] = "pcm16"
-                    logger.info("Azure compat: set default output_audio_format='pcm16'")
-
-            # 3. Normalise GA content types (output_audio → audio, etc.)
-            _normalise_content_types(event)
-
-            return await original_handle(self, event)
-
-        OpenAIRealtimeWebSocketModel._handle_ws_event = _patched_handle_ws_event
-
-        # Patch outgoing messages to inject Azure GA required fields and
-        # transform SDK field names to Azure GA format.
-        #
-        # Key differences between OpenAI preview and Azure GA:
-        #   SDK (OpenAI preview)            →  Azure GA
-        #   ─────────────────────────────────────────────────
-        #   input_audio_format: "pcm16"     →  audio.input.format: "pcm16"
-        #   output_audio_format: "pcm16"    →  audio.output.format: "pcm16"
-        #   input_audio_transcription: {}   →  audio.input.transcription: {}
-        #   model: "..."                    →  (removed — set via URL)
-        #   (missing)                       →  type: "realtime" (required)
-        from websockets.asyncio.client import ClientConnection as _ClientConnection
-
-        original_ws_send = _ClientConnection.send
-
-        # Format string → Azure GA format object mapping
-        # SDK uses strings like "pcm16"; Azure GA uses objects like {"type": "audio/pcm", "rate": 24000}
-        _FORMAT_STRING_TO_OBJECT = {
-            "pcm16": {"type": "audio/pcm", "rate": 24000},
-            "g711_ulaw": {"type": "audio/g711-ulaw", "rate": 8000},
-            "g711_alaw": {"type": "audio/g711-alaw", "rate": 8000},
-        }
-
-        def _convert_audio_format(fmt):
-            """Convert an SDK format string to Azure GA format object if needed."""
-            if isinstance(fmt, str):
-                return _FORMAT_STRING_TO_OBJECT.get(fmt, {"type": fmt})
-            return fmt  # already an object
-
-        def _transform_session_for_azure_ga(session: dict) -> dict:
-            """Transform an SDK-format session dict into Azure GA format."""
-            # 1. Inject required session.type
-            if "type" not in session:
-                session["type"] = "realtime"
-
-            # 2. Remove model (set via URL in GA, and may cause issues)
-            session.pop("model", None)
-
-            # 3. Convert flat audio fields → nested audio object
-            #    Azure GA nests ALL audio config under session.audio:
-            #      audio.input.format (object!), audio.input.transcription,
-            #      audio.input.turn_detection, audio.input.noise_reduction
-            #      audio.output.format (object!), audio.output.voice, audio.output.speed
-            input_fmt = session.pop("input_audio_format", None)
-            output_fmt = session.pop("output_audio_format", None)
-            transcription = session.pop("input_audio_transcription", None)
-            turn_detection = session.pop("turn_detection", None)
-            noise_reduction = session.pop("input_audio_noise_reduction", None)
-            voice = session.pop("voice", None)
-            speed = session.pop("speed", None)
-
-            audio = session.get("audio", {}) or {}
-            needs_audio = False
-
-            # Audio input settings
-            audio_input = audio.get("input", {}) or {}
-            if input_fmt:
-                audio_input["format"] = _convert_audio_format(input_fmt)
-                needs_audio = True
-            if transcription:
-                audio_input["transcription"] = transcription
-                needs_audio = True
-            if turn_detection:
-                audio_input["turn_detection"] = turn_detection
-                needs_audio = True
-            if noise_reduction:
-                audio_input["noise_reduction"] = noise_reduction
-                needs_audio = True
-            if needs_audio or audio_input:
-                audio["input"] = audio_input
-
-            # Audio output settings
-            audio_output = audio.get("output", {}) or {}
-            if output_fmt:
-                audio_output["format"] = _convert_audio_format(output_fmt)
-                needs_audio = True
-            if voice:
-                audio_output["voice"] = voice
-                needs_audio = True
-            if speed:
-                audio_output["speed"] = speed
-                needs_audio = True
-            if audio_output:
-                audio["output"] = audio_output
-
-            if needs_audio:
-                session["audio"] = audio
-
-            # 4. Convert modalities → output_modalities (Azure GA naming)
-            modalities = session.pop("modalities", None)
-            if modalities is not None:
-                session["output_modalities"] = modalities
-
-            # 5. Strip any remaining fields that Azure GA doesn't recognise
-            #    Known GA top-level fields (from session.created response):
-            _GA_KNOWN_FIELDS = {
-                "type", "object", "id", "model", "output_modalities",
-                "instructions", "tools", "tool_choice", "max_output_tokens",
-                "tracing", "prompt", "expires_at", "audio", "include",
-                "max_response_output_tokens", "temperature",
-            }
-            unknown_fields = [k for k in list(session.keys()) if k not in _GA_KNOWN_FIELDS]
-            for field in unknown_fields:
-                val = session.pop(field)
-                logger.warning(f"Azure compat: stripping unknown field '{field}' (value={str(val)[:80]})")
-
-            return session
-
-        async def _patched_ws_send(ws_self, message, text=None):
-            if isinstance(message, str) and '"session.update"' in message:
-                try:
-                    msg_obj = json.loads(message)
-                    if msg_obj.get("type") == "session.update":
-                        session = msg_obj.get("session", {})
-                        session = _transform_session_for_azure_ga(session)
-                        msg_obj["session"] = session
-                        message = json.dumps(msg_obj)
-                        # Log for debugging
-                        instr = session.get("instructions", "NOT_SET")
-                        if isinstance(instr, str) and len(instr) > 100:
-                            instr = instr[:100] + "..."
-                        logger.info(f"Azure compat: transformed session.update → keys={list(session.keys())}")
-                        logger.info(f"OUTGOING session.update: instructions={instr}")
-                except Exception as e:
-                    logger.warning(f"Could not transform outgoing session.update: {e}")
-            return await original_ws_send(ws_self, message, text=text)
-
-        _ClientConnection.send = _patched_ws_send
-
-        logger.info("Azure OpenAI GA compatibility patch applied")
-    except Exception as e:
-        logger.warning(f"Failed to apply Azure compat patch: {e}")
+    from clinical_master.config import settings
+    from clinical_master.db.session_repository import SessionRepository
 
 logger = logging.getLogger(__name__)
+
+APP_NAME = "clinical-master"
 
 
 class ConsultationTimer:
     """Timer for consultation duration with hard cutoff."""
-    
+
     def __init__(self, duration_seconds: int):
         self.duration = duration_seconds
         self.start_time: datetime | None = None
         self._task: asyncio.Task | None = None
         self._on_end_callback = None
-    
+
     def start(self, on_end_callback):
         """Start the timer with a callback for when it expires."""
         self.start_time = datetime.now()
         self._on_end_callback = on_end_callback
         self._task = asyncio.create_task(self._countdown())
-    
+
     async def _countdown(self):
         """Wait for duration then trigger callback."""
         await asyncio.sleep(self.duration)
         if self._on_end_callback:
             await self._on_end_callback()
-    
+
     def remaining_seconds(self) -> int:
         """Get remaining seconds in consultation."""
         if not self.start_time:
             return self.duration
         elapsed = (datetime.now() - self.start_time).total_seconds()
         return max(0, int(self.duration - elapsed))
-    
+
     def cancel(self):
         """Cancel the timer."""
         if self._task and not self._task.done():
@@ -351,31 +80,39 @@ class ConsultationTimer:
 
 class SessionManager:
     """
-    Manages realtime voice sessions.
-    
-    Follows the pattern from openai-agents-python/examples/realtime/app/server.py
+    Manages real-time voice consultation sessions using ADK Gemini Live.
+
+    Each session creates:
+      - An ADK Agent (patient persona from station data)
+      - An ADK Runner + LiveRequestQueue for bidirectional streaming
+      - A ConsultationTimer for enforcing time limits
+      - Transcript accumulation and database persistence
     """
-    
+
     def __init__(self):
-        _apply_azure_compat_patch()
-        self.active_sessions: dict[str, RealtimeSession] = {}
-        self.session_contexts: dict[str, Any] = {}
+        # ADK session service (in-memory — each consultation is independent)
+        self.session_service = InMemorySessionService()
+
+        # Per-session state
         self.websockets: dict[str, WebSocket] = {}
         self.transcripts: dict[str, list[dict]] = {}
         self.timers: dict[str, ConsultationTimer] = {}
         self.feedback_results: dict[str, dict] = {}
-        self.feedback_generating: set[str] = set()  # Guard against duplicate generation
+        self.feedback_generating: set[str] = set()
+        self.live_queues: dict[str, LiveRequestQueue] = {}
+        self._gather_tasks: dict[str, asyncio.Task] = {}
+        # Track if session ended to prevent double end
+        self._ended: set[str] = set()
+
         # Database session info: { session_id: { db_session_id, user_id, station_id, station_data } }
         self.db_sessions: dict[str, dict] = {}
-        # Track seen item_ids per session for deduplication (SDK pattern)
-        self.seen_item_ids: dict[str, set[str]] = {}
-        # Map item_id to transcript content for updates
-        self.item_transcripts: dict[str, dict[str, dict]] = {}
+
         # Delta accumulator buffers for streaming transcripts
         self.delta_buffers: dict[str, dict[str, str]] = {}
-        # Initialize repository (will be lazy-loaded to avoid startup errors)
+
+        # Initialize repository (lazy-loaded)
         self._db_repo: SessionRepository | None = None
-    
+
     @property
     def db_repo(self) -> SessionRepository | None:
         """Lazy-load database repository."""
@@ -385,41 +122,35 @@ class SessionManager:
             except Exception as e:
                 logger.warning(f"Could not initialize database repository: {e}")
         return self._db_repo
-    
-    async def connect(self, websocket: WebSocket, session_id: str, user_id: str | None = None, station_id: str | None = None):
+
+    async def connect(self, websocket: WebSocket, session_id: str,
+                      user_id: str | None = None, station_id: str | None = None):
         """
-        Accept WebSocket connection and start realtime session.
-        
-        Args:
-            websocket: WebSocket connection
-            session_id: Client session identifier
-            user_id: Authenticated user's ID (optional, for database persistence)
-            station_id: Station to load (optional, defaults to first available station)
+        Accept WebSocket connection, initialise ADK session, and run the
+        bidirectional streaming loop until the consultation ends or
+        the client disconnects.
+
+        This method blocks for the entire duration of the consultation.
         """
         await websocket.accept()
         self.websockets[session_id] = websocket
         self.transcripts[session_id] = []
-        self.seen_item_ids[session_id] = set()
-        self.item_transcripts[session_id] = {}
         self.delta_buffers[session_id] = {"user": "", "assistant": ""}
-        
+
         logger.info(f"Session {session_id}: Connection accepted")
-        
-        # Load station and create database session if repository is available
+
+        # ── Load station & create DB record ──────────────────────
         station_data = None
         db_session_id = None
         if self.db_repo:
             try:
-                # Get station from database
                 if station_id:
                     station_data = self.db_repo.get_station(station_id)
                 else:
                     station_data = self.db_repo.get_first_station()
-                
+
                 if station_data:
                     logger.info(f"Session {session_id}: Loaded station '{station_data.get('title')}'")
-                    
-                    # Create database session record if user is authenticated
                     if user_id:
                         db_session = self.db_repo.create_session(user_id, station_data['id'])
                         if db_session:
@@ -429,151 +160,302 @@ class SessionManager:
                     logger.warning(f"Session {session_id}: No station found in database")
             except Exception as e:
                 logger.error(f"Session {session_id}: Database error - {e}")
-        
-        # Store database session info
+
         self.db_sessions[session_id] = {
             'db_session_id': db_session_id,
             'user_id': user_id,
             'station_id': station_data['id'] if station_data else None,
-            'station_data': station_data
+            'station_data': station_data,
         }
-        
-        # Get patient agent with station-specific prompt
+
+        # ── Create ADK Agent + Runner ────────────────────────────
         agent = get_patient_agent(station_data)
-        runner = RealtimeRunner(agent)
-        
-        # Build Azure OpenAI WebSocket URL for Realtime API
-        # GA Format: wss://{resource}.openai.azure.com/openai/v1/realtime?model={deployment}
-        # (No api-version needed for GA models like gpt-realtime)
-        azure_endpoint = settings.AZURE_OPENAI_ENDPOINT.rstrip('/')
-        # Convert https:// to wss://
-        if azure_endpoint.startswith('https://'):
-            ws_endpoint = azure_endpoint.replace('https://', 'wss://')
-        elif azure_endpoint.startswith('http://'):
-            ws_endpoint = azure_endpoint.replace('http://', 'ws://')
-        else:
-            ws_endpoint = f"wss://{azure_endpoint}"
-        
-        # Use GA endpoint format (no api-version, model as query param)
-        azure_url = (
-            f"{ws_endpoint}/openai/v1/realtime"
-            f"?model={settings.AZURE_OPENAI_REALTIME_DEPLOYMENT}"
+        runner = Runner(
+            app_name=APP_NAME,
+            agent=agent,
+            session_service=self.session_service,
         )
-        
-        logger.info(f"Session {session_id}: Connecting to Azure OpenAI at {azure_url}")
-        
-        # Configure for Azure OpenAI with custom URL and headers
-        model_config = {
-            "url": azure_url,
-            "headers": {
-                "api-key": settings.AZURE_OPENAI_API_KEY,
-            },
-            "initial_model_settings": {
-                "modalities": ["audio"],
-                "voice": settings.DEFAULT_VOICE,
-                "input_audio_format": "pcm16",
-                "output_audio_format": "pcm16",
-                "input_audio_transcription": {
-                    "model": "whisper-1",
-                },
-                "turn_detection": {
-                    "type": settings.TURN_DETECTION_TYPE,
-                    "eagerness": settings.TURN_DETECTION_EAGERNESS,
-                    "create_response": True,
-                    "interrupt_response": True,
-                },
-                "input_audio_noise_reduction": {
-                    "type": settings.NOISE_REDUCTION_TYPE
-                },
-            },
-        }
-        
+
+        # Ensure ADK session exists
+        adk_user_id = user_id or "anonymous"
+        adk_session = await self.session_service.get_session(
+            app_name=APP_NAME, user_id=adk_user_id, session_id=session_id,
+        )
+        if not adk_session:
+            await self.session_service.create_session(
+                app_name=APP_NAME, user_id=adk_user_id, session_id=session_id,
+            )
+
+        live_request_queue = LiveRequestQueue()
+        self.live_queues[session_id] = live_request_queue
+
+        # ── RunConfig for native audio model ─────────────────────
+        run_config = RunConfig(
+            streaming_mode=StreamingMode.BIDI,
+            response_modalities=["AUDIO"],
+            input_audio_transcription=types.AudioTranscriptionConfig(),
+            output_audio_transcription=types.AudioTranscriptionConfig(),
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=settings.DEFAULT_VOICE,
+                    )
+                )
+            ),
+        )
+
+        # ── Start consultation timer ─────────────────────────────
+        duration = settings.CONSULTATION_DURATION_SECONDS
+        if station_data and station_data.get('consultation_duration_seconds'):
+            duration = station_data['consultation_duration_seconds']
+
+        timer = ConsultationTimer(duration)
+        timer.start(lambda: self._on_timer_end(session_id))
+        self.timers[session_id] = timer
+
+        # Notify client that session is ready
         try:
-            session_context = await runner.run(model_config=model_config)
-            session = await session_context.__aenter__()
-            self.active_sessions[session_id] = session
-            self.session_contexts[session_id] = session_context
-            
-            logger.info(f"Session {session_id}: Realtime session started")
-            
-            # Use station-specific or global consultation duration
-            duration = settings.CONSULTATION_DURATION_SECONDS
-            if station_data and station_data.get('consultation_duration_seconds'):
-                duration = station_data['consultation_duration_seconds']
-            
-            # Start timer
-            timer = ConsultationTimer(duration)
-            timer.start(lambda: self._on_timer_end(session_id))
-            self.timers[session_id] = timer
-            
-            # Notify client that session is ready
             await websocket.send_text(json.dumps({
                 "type": "session_started",
                 "duration_seconds": duration,
             }))
-            
-            # Start event processing
-            asyncio.create_task(self._process_events(session_id))
-            
+        except Exception:
+            pass
+
+        logger.info(f"Session {session_id}: ADK live session started (model={agent.model}, voice={settings.DEFAULT_VOICE}, duration={duration}s)")
+
+        # ── Concurrent upstream / downstream tasks ───────────────
+        async def upstream_task():
+            """Forward client WebSocket audio/text to ADK via LiveRequestQueue."""
+            try:
+                while True:
+                    message = await websocket.receive()
+
+                    if "bytes" in message:
+                        audio_data = message["bytes"]
+                        audio_blob = types.Blob(
+                            mime_type="audio/pcm;rate=16000",
+                            data=audio_data,
+                        )
+                        live_request_queue.send_realtime(audio_blob)
+
+                    elif "text" in message:
+                        text_data = message["text"]
+                        try:
+                            json_message = json.loads(text_data)
+                            msg_type = json_message.get("type", "")
+
+                            if msg_type == "end_consultation":
+                                logger.info(f"Session {session_id}: Client requested end")
+                                await self._on_timer_end(session_id)
+                                break
+
+                            elif msg_type == "text":
+                                content = types.Content(
+                                    parts=[types.Part(text=json_message.get("text", ""))]
+                                )
+                                live_request_queue.send_content(content)
+                        except json.JSONDecodeError:
+                            logger.warning(f"Session {session_id}: Invalid JSON from client")
+
+            except Exception as e:
+                if "disconnect" not in str(e).lower():
+                    logger.error(f"Session {session_id}: Upstream error - {e}")
+
+        async def downstream_task():
+            """Process ADK events and forward to client WebSocket."""
+            try:
+                async for event in runner.run_live(
+                    user_id=adk_user_id,
+                    session_id=session_id,
+                    live_request_queue=live_request_queue,
+                    run_config=run_config,
+                ):
+                    await self._handle_adk_event(session_id, event, websocket)
+            except Exception as e:
+                if "disconnect" not in str(e).lower():
+                    logger.error(f"Session {session_id}: Downstream error - {e}")
+
+        # Run both tasks concurrently — exception in either cancels both
+        try:
+            gather_task = asyncio.gather(upstream_task(), downstream_task())
+            self._gather_tasks[session_id] = gather_task
+            await gather_task
         except Exception as e:
-            logger.error(f"Session {session_id}: Failed to start - {e}")
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "message": f"Failed to start session: {str(e)}",
-            }))
-            await websocket.close()
-    
+            if "disconnect" not in str(e).lower():
+                logger.error(f"Session {session_id}: Session loop error - {e}")
+        finally:
+            live_request_queue.close()
+            self.live_queues.pop(session_id, None)
+            self._gather_tasks.pop(session_id, None)
+
     async def disconnect(self, session_id: str):
         """Clean up session resources."""
         transcript = self.transcripts.get(session_id, [])
-        delta_buf = self.delta_buffers.get(session_id, {})
-        buf_summary = ", ".join(f"{k}:{len(v)}chars" for k, v in delta_buf.items()) if delta_buf else "empty"
-        logger.info(f"Session {session_id}: Disconnecting (transcript={len(transcript)} items, delta_buffers={buf_summary})")
-        
+        logger.info(f"Session {session_id}: Disconnecting (transcript={len(transcript)} items)")
+
         # Cancel timer
         if session_id in self.timers:
             self.timers[session_id].cancel()
             del self.timers[session_id]
-        
-        # Close realtime session
-        context = self.session_contexts.pop(session_id, None)
-        if context:
-            try:
-                await context.__aexit__(None, None, None)
-            except Exception as e:
-                logger.error(f"Session {session_id}: Error closing context - {e}")
-        
-        # Clean up all session data
-        self.active_sessions.pop(session_id, None)
+
+        # Close live queue if still open
+        queue = self.live_queues.pop(session_id, None)
+        if queue:
+            queue.close()
+
+        # Cancel gather task
+        task = self._gather_tasks.pop(session_id, None)
+        if task and not task.done():
+            task.cancel()
+
+        # Clean up session data
         self.websockets.pop(session_id, None)
-        self.seen_item_ids.pop(session_id, None)
-        self.item_transcripts.pop(session_id, None)
         self.delta_buffers.pop(session_id, None)
-    
-    async def send_audio(self, session_id: str, audio_bytes: bytes):
-        """Send audio data to the realtime session."""
-        session = self.active_sessions.get(session_id)
-        if session:
-            await session.send_audio(audio_bytes)
-    
-    async def interrupt(self, session_id: str):
-        """Interrupt current model response."""
-        session = self.active_sessions.get(session_id)
-        if session:
-            await session.interrupt()
-    
-    async def end_consultation(self, session_id: str):
-        """End the consultation early (before timer)."""
-        await self._on_timer_end(session_id)
-    
+
+    # ── ADK Event Handling ───────────────────────────────────────
+    async def _handle_adk_event(self, session_id: str, event, websocket: WebSocket):
+        """
+        Process a single ADK event and forward relevant data to the client.
+
+        ADK events are generic; we map them to the Clinical Master
+        frontend event types:
+          - audio            →  base64 audio chunk for playback
+          - transcript_delta →  incremental transcript text
+          - audio_interrupted → signal to clear playback buffer
+          - history_added    →  completed transcript entry
+        """
+        try:
+            # Check for content parts in the event
+            if hasattr(event, 'content') and event.content and hasattr(event.content, 'parts'):
+                for part in event.content.parts:
+                    # Audio data from model
+                    if hasattr(part, 'inline_data') and part.inline_data:
+                        audio_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
+                        await self._ws_send(websocket, {
+                            "type": "audio",
+                            "audio": audio_b64,
+                        })
+
+                    # Text from model (assistant transcript)
+                    elif hasattr(part, 'text') and part.text:
+                        text = part.text
+                        self.delta_buffers.setdefault(session_id, {"user": "", "assistant": ""})
+                        self.delta_buffers[session_id]["assistant"] += text
+                        await self._ws_send(websocket, {
+                            "type": "transcript_delta",
+                            "item": {"role": "assistant", "content": text},
+                        })
+
+            # Transcription of user's audio input
+            if hasattr(event, 'transcription') and event.transcription:
+                transcription = event.transcription
+                if hasattr(transcription, 'text') and transcription.text:
+                    user_text = transcription.text
+                    logger.info(f"Session {session_id}: User transcription: {user_text[:80]}...")
+                    self.transcripts.setdefault(session_id, []).append({
+                        "role": "user",
+                        "content": user_text,
+                        "timestamp": datetime.now().isoformat(),
+                    })
+                    await self._ws_send(websocket, {
+                        "type": "transcript_delta",
+                        "item": {"role": "user", "content": user_text},
+                    })
+
+            # Server content with model turn (check for model_turn audio transcription)
+            if hasattr(event, 'server_content') and event.server_content:
+                sc = event.server_content
+                # Model turn contains output audio transcription
+                if hasattr(sc, 'model_turn') and sc.model_turn:
+                    for part in (sc.model_turn.parts or []):
+                        if hasattr(part, 'inline_data') and part.inline_data:
+                            audio_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
+                            await self._ws_send(websocket, {
+                                "type": "audio",
+                                "audio": audio_b64,
+                            })
+                        elif hasattr(part, 'text') and part.text:
+                            self.delta_buffers.setdefault(session_id, {"user": "", "assistant": ""})
+                            self.delta_buffers[session_id]["assistant"] += part.text
+                            await self._ws_send(websocket, {
+                                "type": "transcript_delta",
+                                "item": {"role": "assistant", "content": part.text},
+                            })
+
+                # Output audio transcription (separate from inline parts)
+                if hasattr(sc, 'output_transcription') and sc.output_transcription:
+                    t = sc.output_transcription
+                    if hasattr(t, 'text') and t.text:
+                        self.delta_buffers.setdefault(session_id, {"user": "", "assistant": ""})
+                        self.delta_buffers[session_id]["assistant"] += t.text
+                        await self._ws_send(websocket, {
+                            "type": "transcript_delta",
+                            "item": {"role": "assistant", "content": t.text},
+                        })
+
+                # Input transcription (user side from server)
+                if hasattr(sc, 'input_transcription') and sc.input_transcription:
+                    t = sc.input_transcription
+                    if hasattr(t, 'text') and t.text:
+                        logger.info(f"Session {session_id}: Input transcription: {t.text[:80]}...")
+                        self.transcripts.setdefault(session_id, []).append({
+                            "role": "user",
+                            "content": t.text,
+                            "timestamp": datetime.now().isoformat(),
+                        })
+                        await self._ws_send(websocket, {
+                            "type": "transcript_delta",
+                            "item": {"role": "user", "content": t.text},
+                        })
+
+                # Turn complete — flush assistant buffer
+                if hasattr(sc, 'turn_complete') and sc.turn_complete:
+                    self._flush_delta_buffer(session_id, "assistant")
+                    await self._ws_send(websocket, {
+                        "type": "history_added",
+                        "item": {"role": "assistant", "content": "[turn complete]"},
+                    })
+
+                # Interrupted — signal client to clear audio
+                if hasattr(sc, 'interrupted') and sc.interrupted:
+                    self._flush_delta_buffer(session_id, "assistant")
+                    await self._ws_send(websocket, {
+                        "type": "audio_interrupted",
+                    })
+
+            # Also check top-level interrupted flag
+            if hasattr(event, 'interrupted') and event.interrupted:
+                self._flush_delta_buffer(session_id, "assistant")
+                await self._ws_send(websocket, {
+                    "type": "audio_interrupted",
+                })
+
+            # Check for partial result / turn_complete at event level
+            if hasattr(event, 'turn_complete') and event.turn_complete:
+                self._flush_delta_buffer(session_id, "assistant")
+
+        except Exception as e:
+            if "disconnect" not in str(e).lower():
+                logger.error(f"Session {session_id}: Error handling ADK event - {e}")
+
+    async def _ws_send(self, websocket: WebSocket, data: dict):
+        """Send JSON to WebSocket with error handling."""
+        try:
+            await websocket.send_text(json.dumps(data))
+        except Exception:
+            pass
+
+    # ── Transcript buffer management ─────────────────────────────
+
     def _flush_delta_buffer(self, session_id: str, role: str):
         """Flush accumulated delta buffer for a role to transcripts list."""
         if session_id not in self.delta_buffers:
             return
-        
+
         buffer = self.delta_buffers[session_id]
         content = buffer.get(role, "").strip()
-        
+
         if content:
             logger.info(f"Session {session_id}: Flushing {role} buffer: {content[:50]}...")
             self.transcripts.setdefault(session_id, []).append({
@@ -582,32 +464,43 @@ class SessionManager:
                 "timestamp": datetime.now().isoformat(),
             })
             buffer[role] = ""
-    
+
     def _flush_all_delta_buffers(self, session_id: str):
         """Flush all remaining delta buffers before saving."""
         self._flush_delta_buffer(session_id, "user")
         self._flush_delta_buffer(session_id, "assistant")
-    
+
+    # ── Timer & Consultation End ─────────────────────────────────
+
     async def _on_timer_end(self, session_id: str):
-        """Called when timer expires or consultation ends."""
+        """Called when timer expires or consultation ends manually."""
+        # Guard against double invocation
+        if session_id in self._ended:
+            return
+        self._ended.add(session_id)
+
         logger.info(f"Session {session_id}: Consultation ended")
-        
+
         websocket = self.websockets.get(session_id)
         if websocket:
-            await websocket.send_text(json.dumps({
+            await self._ws_send(websocket, {
                 "type": "consultation_ended",
                 "message": "Time's up! Generating feedback...",
-            }))
-        
+            })
+
+        # Cancel timer
+        if session_id in self.timers:
+            self.timers[session_id].cancel()
+
         # Flush any remaining delta buffers before saving
         self._flush_all_delta_buffers(session_id)
-        
+
         # Save transcript to database
         transcript = self.transcripts.get(session_id, [])
         logger.info(f"Session {session_id}: Transcript has {len(transcript)} items")
         for i, t in enumerate(transcript[:5]):
             logger.info(f"Session {session_id}: Transcript[{i}] role={t.get('role')}, content={t.get('content', '')[:50]}...")
-        
+
         db_info = self.db_sessions.get(session_id, {})
         if db_info.get('db_session_id') and self.db_repo:
             try:
@@ -615,246 +508,16 @@ class SessionManager:
                 self.db_repo.update_session_status(db_info['db_session_id'], 'processing')
             except Exception as e:
                 logger.error(f"Session {session_id}: Failed to save transcript - {e}")
-        
+
         # Trigger async feedback generation
         asyncio.create_task(self._generate_feedback(session_id, transcript))
-        
-        # Disconnect the realtime session
-        await self.disconnect(session_id)
-    
-    async def _process_events(self, session_id: str):
-        """Process events from the realtime session."""
-        try:
-            session = self.active_sessions.get(session_id)
-            websocket = self.websockets.get(session_id)
-            
-            if not session or not websocket:
-                return
-            
-            async for event in session:
-                await self._handle_event(session_id, event, websocket)
-                
-        except Exception as e:
-            logger.error(f"Session {session_id}: Error processing events - {e}")
-    
-    async def _handle_event(self, session_id: str, event, websocket: WebSocket):
-        """Handle a single event from the realtime session."""
-        # Log all non-audio event types for debugging transcript flow
-        if event.type != "audio":
-            logger.info(f"Session {session_id}: EVENT received → {event.type}")
-        event_data: dict[str, Any] = {"type": event.type}
-        
-        if event.type == "audio":
-            # Send audio to browser
-            event_data["audio"] = base64.b64encode(event.audio.data).decode("utf-8")
-            logger.debug(f"Session {session_id}: Audio chunk {len(event.audio.data)} bytes")
-            
-        elif event.type == "audio_interrupted":
-            # Audio was interrupted by user speech
-            event_data["type"] = "audio_interrupted"
-            
-        elif event.type == "history_added":
-            # Single new item added (RealtimeHistoryAdded — has .item)
-            item = event.item
-            await self._process_history_item(session_id, item, websocket)
-            return
-        
-        elif event.type == "history_updated":
-            # Full history list (RealtimeHistoryUpdated — .history is list[RealtimeItem])
-            for item in event.history:
-                await self._process_history_item(session_id, item, websocket)
-            return
-        
-        elif event.type == "raw_model_event":
-            # The SDK wraps all model events as raw_model_event first.
-            # Extract transcript data from the underlying event.
-            raw = getattr(event, "data", None)
-            if raw is None:
-                return
-            
-            raw_type = getattr(raw, "type", "")
-            
-            if raw_type == "transcript_delta":
-                # Assistant audio transcript delta
-                delta = getattr(raw, "delta", "")
-                if delta:
-                    self.delta_buffers.setdefault(session_id, {"user": "", "assistant": ""})
-                    self.delta_buffers[session_id]["assistant"] += delta
-                    logger.debug(f"Session {session_id}: Assistant transcript delta: {delta[:50]}")
-                    
-                    try:
-                        await websocket.send_text(json.dumps({
-                            "type": "transcript_delta",
-                            "item": {"role": "assistant", "content": delta}
-                        }))
-                    except Exception:
-                        pass
-                return
-            
-            elif raw_type == "input_audio_transcription_completed":
-                # User audio transcription completed (whisper-1 result)
-                transcript_text = getattr(raw, "transcript", "")
-                if transcript_text:
-                    logger.info(f"Session {session_id}: User transcription completed: {transcript_text[:80]}...")
-                    self.transcripts.setdefault(session_id, []).append({
-                        "role": "user",
-                        "content": transcript_text,
-                        "timestamp": datetime.now().isoformat(),
-                        "item_id": getattr(raw, "item_id", None),
-                    })
-                    try:
-                        await websocket.send_text(json.dumps({
-                            "type": "transcript_delta",
-                            "item": {"role": "user", "content": transcript_text}
-                        }))
-                    except Exception:
-                        pass
-                return
-            
-            # Other raw model events - skip
-            return
-        
-        elif event.type == "audio_end":
-            # Audio playback ended — flush assistant buffer to transcript
-            self._flush_delta_buffer(session_id, "assistant")
-            return
-        
-        elif event.type == "agent_end":
-            # Agent turn ended — flush all buffers
-            self._flush_all_delta_buffers(session_id)
-            return
-        
-        else:
-            # Other events (e.g. tool calls, errors) - skip for now
-            return
-        
-        # Send event to client
-        await websocket.send_text(json.dumps(event_data))
-    
-    async def _process_history_item(self, session_id: str, item, websocket: WebSocket):
-        """Process a single RealtimeItem from history events."""
-        item_id = getattr(item, "item_id", None)
-        role = getattr(item, "role", None)
-        
-        if not item_id or not role:
-            return
-        
-        # Check if already processed
-        if item_id in self.seen_item_ids.get(session_id, set()):
-            # Check for transcript updates (e.g. whisper-1 filling in user audio)
-            new_content = self._extract_transcript_from_item(item)
-            prev = self.item_transcripts.get(session_id, {}).get(item_id, {})
-            if new_content and new_content != prev.get("content"):
-                # Updated transcript (e.g. whisper-1 result arrived)
-                self.item_transcripts[session_id][item_id] = {
-                    "role": role, "content": new_content
-                }
-                # Update in-place in transcript list
-                for t in self.transcripts.get(session_id, []):
-                    if t.get("item_id") == item_id:
-                        t["content"] = new_content
-                        break
-                
-                event_data = {
-                    "type": "transcript_update",
-                    "item": {"role": role, "content": new_content}
-                }
-                try:
-                    await websocket.send_text(json.dumps(event_data))
-                except Exception:
-                    pass
-            return
-        
-        self.seen_item_ids[session_id].add(item_id)
-        
-        content = self._extract_transcript_from_item(item)
-        if not content:
-            content = self._extract_content(item)
-        
-        if content:
-            self.item_transcripts[session_id][item_id] = {
-                "role": role, "content": content
-            }
-            self.transcripts[session_id].append({
-                "role": role,
-                "content": content,
-                "timestamp": datetime.now().isoformat(),
-                "item_id": item_id,
-            })
-            
-            event_data = {
-                "type": "history_added",
-                "item": {"role": role, "content": content}
-            }
-            try:
-                await websocket.send_text(json.dumps(event_data))
-            except Exception:
-                pass
-    
-    def _extract_content(self, item) -> str:
-        """Extract text content from a history item."""
-        content = getattr(item, "content", None)
-        if not content:
-            return ""
-        
-        if isinstance(content, str):
-            return content
-        
-        if isinstance(content, list):
-            texts = []
-            for part in content:
-                if isinstance(part, dict):
-                    if part.get("type") == "text":
-                        text = part.get("text")
-                        if text:
-                            texts.append(text)
-                    elif part.get("type") == "transcript":
-                        transcript = part.get("transcript")
-                        if transcript:
-                            texts.append(transcript)
-                elif hasattr(part, "text") and part.text:
-                    texts.append(part.text)
-                elif hasattr(part, "transcript") and part.transcript:
-                    texts.append(part.transcript)
-            return " ".join(t for t in texts if t)
-        
-        return str(content)
-    
-    def _extract_transcript_from_item(self, item) -> str:
-        """Extract transcript content from a RealtimeItem following SDK pattern.
-        
-        Looks for the 'transcript' field in content parts (InputAudio, AssistantAudio types).
-        Falls back to _extract_content for text-based content.
-        """
-        content = getattr(item, "content", None)
-        if not content:
-            return ""
-        
-        if isinstance(content, list):
-            transcripts = []
-            for part in content:
-                if hasattr(part, "transcript") and part.transcript:
-                    transcripts.append(part.transcript)
-                elif isinstance(part, dict):
-                    transcript = part.get("transcript")
-                    if transcript:
-                        transcripts.append(transcript)
-                    elif part.get("type") in ("text", "input_text"):
-                        text = part.get("text")
-                        if text:
-                            transcripts.append(text)
-                elif hasattr(part, "text") and part.text:
-                    transcripts.append(part.text)
-            
-            if transcripts:
-                return " ".join(t for t in transcripts if t)
-        
-        return self._extract_content(item)
-    
-    def get_db_session_id(self, session_id: str) -> str | None:
-        """Resolve WebSocket session_id to database session_id."""
-        db_info = self.db_sessions.get(session_id, {})
-        return db_info.get('db_session_id')
+
+        # Close the live queue to end streaming
+        queue = self.live_queues.get(session_id)
+        if queue:
+            queue.close()
+
+    # ── Feedback Generation ──────────────────────────────────────
 
     async def _generate_feedback(self, session_id: str, transcript: list[dict]):
         """Generate feedback asynchronously."""
@@ -871,14 +534,14 @@ class SessionManager:
             from ..ai_agents.feedback import generate_feedback
         except ImportError:
             from clinical_master.ai_agents.feedback import generate_feedback
-        
+
         try:
             logger.info(f"Session {session_id}: Generating feedback...")
-            
+
             # Get case brief from station data if available
             db_info = self.db_sessions.get(session_id, {})
             station_data = db_info.get('station_data', {})
-            
+
             if station_data:
                 case_brief = (
                     f"{station_data.get('patient_name', 'Unknown')}, "
@@ -890,15 +553,15 @@ class SessionManager:
                     "Clinical consultation case. Assess the candidate's "
                     "data gathering, clinical management, and interpersonal skills."
                 )
-            
+
             feedback = await generate_feedback(transcript, case_brief)
-            
+
             # Store feedback locally
             feedback_dict = feedback.model_dump()
             self.feedback_results[session_id] = feedback_dict
-            
+
             logger.info(f"Session {session_id}: Feedback generated")
-            
+
             # Save feedback to database
             db_info = self.db_sessions.get(session_id, {})
             if db_info.get('db_session_id') and self.db_repo:
@@ -907,23 +570,23 @@ class SessionManager:
                         'data_gathering': {
                             'score': feedback_dict.get('data_gathering', {}).get('score', 0),
                             'strengths': feedback_dict.get('data_gathering', {}).get('strengths', []),
-                            'improvements': feedback_dict.get('data_gathering', {}).get('improvements', [])
+                            'improvements': feedback_dict.get('data_gathering', {}).get('improvements', []),
                         },
                         'clinical_management': {
                             'score': feedback_dict.get('clinical_management', {}).get('score', 0),
                             'strengths': feedback_dict.get('clinical_management', {}).get('strengths', []),
-                            'improvements': feedback_dict.get('clinical_management', {}).get('improvements', [])
+                            'improvements': feedback_dict.get('clinical_management', {}).get('improvements', []),
                         },
                         'interpersonal_skills': {
                             'score': feedback_dict.get('interpersonal_skills', {}).get('score', 0),
                             'strengths': feedback_dict.get('interpersonal_skills', {}).get('strengths', []),
-                            'improvements': feedback_dict.get('interpersonal_skills', {}).get('improvements', [])
+                            'improvements': feedback_dict.get('interpersonal_skills', {}).get('improvements', []),
                         },
                         'overall_summary': feedback_dict.get('overall_summary', ''),
-                        'key_learning_points': feedback_dict.get('key_learning_points', [])
+                        'key_learning_points': feedback_dict.get('key_learning_points', []),
                     }
                     self.db_repo.save_feedback(db_info['db_session_id'], db_feedback)
-                    
+
                     # Update domain progress if station has a domain
                     station_data = db_info.get('station_data', {})
                     if db_info.get('user_id') and station_data.get('domain_id'):
@@ -935,32 +598,39 @@ class SessionManager:
                         passed = all([
                             db_feedback['data_gathering']['score'] >= 60,
                             db_feedback['clinical_management']['score'] >= 60,
-                            db_feedback['interpersonal_skills']['score'] >= 60
+                            db_feedback['interpersonal_skills']['score'] >= 60,
                         ])
                         self.db_repo.update_domain_progress(
                             db_info['user_id'],
                             station_data['domain_id'],
                             overall_score,
-                            passed
+                            passed,
                         )
                 except Exception as e:
                     logger.error(f"Session {session_id}: Failed to save feedback to database - {e}")
-            
+
             # Try to notify client if still connected
             websocket = self.websockets.get(session_id)
             if websocket:
-                await websocket.send_text(json.dumps({
+                await self._ws_send(websocket, {
                     "type": "feedback_ready",
                     "feedback": feedback.model_dump(),
-                }))
-                
+                })
+
         except Exception as e:
             logger.error(f"Session {session_id}: Feedback generation failed - {e}")
             self.feedback_results[session_id] = {
                 "error": str(e),
                 "transcript": transcript,
             }
-    
+
+    # ── Public helpers ───────────────────────────────────────────
+
+    def get_db_session_id(self, session_id: str) -> str | None:
+        """Resolve WebSocket session_id to database session_id."""
+        db_info = self.db_sessions.get(session_id, {})
+        return db_info.get('db_session_id')
+
     def get_feedback(self, session_id: str) -> dict | None:
         """Get feedback for a session if available."""
         return self.feedback_results.get(session_id)

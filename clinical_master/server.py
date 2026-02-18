@@ -1,12 +1,11 @@
 """
 Clinical Master - FastAPI Server
 
-WebSocket + REST API server for Azure OpenAI Realtime voice-to-voice.
+WebSocket + REST API server for ADK Gemini Live voice-to-voice.
 Handles realtime voice sessions, transcript capture, and feedback generation.
 """
 
 import asyncio
-import base64
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -45,10 +44,9 @@ session_manager = SessionManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
-    logger.info("Clinical Master starting (Azure OpenAI Realtime)")
-    logger.info(f"  Realtime deployment: {settings.AZURE_OPENAI_REALTIME_DEPLOYMENT}")
+    logger.info("Clinical Master starting (ADK Gemini Live)")
+    logger.info(f"  Model: {settings.GEMINI_LIVE_MODEL}")
     logger.info(f"  Voice: {settings.DEFAULT_VOICE}")
-    logger.info(f"  Turn detection: {settings.TURN_DETECTION_TYPE}")
     logger.info(f"  Consultation duration: {settings.CONSULTATION_DURATION_SECONDS}s")
     yield
     logger.info("Clinical Master shutting down")
@@ -74,8 +72,8 @@ class WSDebugMiddleware:
 
 app = FastAPI(
     title="Clinical Master",
-    description="SCA Consultation Voice Simulator - Azure OpenAI Realtime",
-    version="2.0.0",
+    description="SCA Consultation Voice Simulator - ADK Gemini Live",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -97,7 +95,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "clinical-master",
-        "mode": "azure-realtime",
+        "mode": "gemini-live",
     }
 
 
@@ -123,44 +121,22 @@ async def websocket_endpoint(
     WebSocket endpoint for realtime voice sessions.
     
     The client sends binary audio frames (PCM16) and text commands.
-    The server proxies audio to Azure OpenAI Realtime and sends back:
-    - Audio responses (base64-encoded PCM16)
-    - Transcript updates (history_added, transcript_delta, transcript_update)
-    - Session lifecycle events (session_started, consultation_ended, feedback_ready)
-    """
-    await session_manager.connect(websocket, session_id, user_id, station_id)
+    The session manager handles the full bidirectional streaming loop
+    using ADK's Runner.run_live() + LiveRequestQueue pattern.
     
+    Events sent to client:
+    - session_started: Session is ready with duration info
+    - audio: Base64-encoded PCM16 audio from patient agent
+    - transcript_delta: Incremental transcript text (user or assistant)
+    - history_added: Completed transcript entry
+    - audio_interrupted: Signal to clear audio playback buffer
+    - consultation_ended: Time's up, feedback generation starting
+    - feedback_ready: Structured feedback available
+    """
     try:
-        while True:
-            message = await websocket.receive()
-            
-            if message.get("type") == "websocket.disconnect":
-                break
-            
-            if "bytes" in message:
-                # Binary audio data from browser microphone
-                await session_manager.send_audio(session_id, message["bytes"])
-                
-            elif "text" in message:
-                import json
-                try:
-                    data = json.loads(message["text"])
-                    msg_type = data.get("type", "")
-                    
-                    if msg_type == "interrupt":
-                        await session_manager.interrupt(session_id)
-                    elif msg_type == "end_consultation":
-                        await session_manager.end_consultation(session_id)
-                        break
-                    elif msg_type == "audio":
-                        # Base64-encoded audio from browser
-                        audio_b64 = data.get("audio", "")
-                        if audio_b64:
-                            audio_bytes = base64.b64decode(audio_b64)
-                            await session_manager.send_audio(session_id, audio_bytes)
-                except json.JSONDecodeError:
-                    logger.warning(f"Session {session_id}: Invalid JSON message")
-                    
+        # connect() blocks for the full session duration —
+        # it runs upstream + downstream tasks concurrently
+        await session_manager.connect(websocket, session_id, user_id, station_id)
     except WebSocketDisconnect:
         logger.info(f"Session {session_id}: Client disconnected")
     except Exception as e:

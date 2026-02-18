@@ -1,29 +1,25 @@
 # AI Agents module
-# Configure Azure OpenAI client for text agents (feedback) so the SDK targets Azure
-from openai import AsyncAzureOpenAI
-from agents import set_default_openai_client, set_default_openai_api, set_tracing_disabled
+# Configure Gemini for ADK agents
 
-from ..config import settings
+import os
+import sys
+from pathlib import Path
 
-# Use Chat Completions API instead of Responses API (Azure doesn't support Responses on older versions)
-set_default_openai_api("chat_completions")
+# Handle imports for both package and script modes
+try:
+    from ..config import settings
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from clinical_master.config import settings
 
-# Disable tracing (Azure keys don't work with OpenAI's trace ingestion endpoint)
-set_tracing_disabled(True)
+# Ensure GOOGLE_API_KEY is set in environment for google-genai / ADK
+if settings.GOOGLE_API_KEY and not os.environ.get("GOOGLE_API_KEY"):
+    os.environ["GOOGLE_API_KEY"] = settings.GOOGLE_API_KEY
 
-# Use Azure deployment + api-version for chat/text calls
-# Use chat-specific key if provided, otherwise fall back to primary key
-_chat_api_key = settings.AZURE_OPENAI_CHAT_API_KEY or settings.AZURE_OPENAI_API_KEY
+if settings.GOOGLE_GENAI_USE_VERTEXAI and not os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"):
+    os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = settings.GOOGLE_GENAI_USE_VERTEXAI
 
-_azure_client = AsyncAzureOpenAI(
-    api_key=_chat_api_key,
-    azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-    api_version=settings.AZURE_OPENAI_CHAT_API_VERSION,
-    azure_deployment=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
-)
-set_default_openai_client(_azure_client)
-
-from .feedback import feedback_agent, generate_feedback
+from .feedback import generate_feedback, ConsultationFeedback
 from .patient import get_patient_agent, build_patient_prompt
 
-__all__ = ["feedback_agent", "generate_feedback", "get_patient_agent", "build_patient_prompt"]
+__all__ = ["generate_feedback", "ConsultationFeedback", "get_patient_agent", "build_patient_prompt"]

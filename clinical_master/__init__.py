@@ -1,5 +1,5 @@
-# Clinical Master - Azure OpenAI Realtime Voice Agent for SCA Simulation
-# This module runs alongside the existing Azure Functions
+# Clinical Master - ADK Gemini Live Voice Agent for SCA Simulation
+# Real-time voice consultation simulator with AI feedback
 
 from .server import app as clinical_master_app
 
