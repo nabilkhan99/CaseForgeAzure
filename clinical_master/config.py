@@ -5,7 +5,13 @@ Environment-based settings for ADK Gemini Live voice agent,
 feedback generation, and session management.
 """
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+# Resolve .env relative to this file (clinical_master/.env),
+# not relative to the CWD which may be the parent monorepo dir.
+_ENV_FILE = Path(__file__).parent / ".env"
 
 
 class ClinicalMasterSettings(BaseSettings):
@@ -33,7 +39,7 @@ class ClinicalMasterSettings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str = ""
 
     class Config:
-        env_file = ".env"
+        env_file = str(_ENV_FILE)
         env_file_encoding = "utf-8"
         extra = "ignore"
 
