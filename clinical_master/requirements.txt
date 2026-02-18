@@ -8,7 +8,7 @@ pydantic>=2.10
 pydantic-settings
 
 # AI (realtime patient agent + feedback generation via Azure OpenAI)
-openai-agents>=0.1.0
+openai-agents==0.2.11
 
 # WebSocket client (used by agents.realtime for Azure OpenAI connection)
 websockets
