@@ -171,8 +171,17 @@ class SessionRepository:
                 "key_learning_points": feedback.get("key_learning_points", [])
             }).execute()
             
-            # Update session status to completed
-            self.update_session_status(session_id, "completed")
+            # Update session status to completed with overall score
+            overall = round(
+                (data_gathering.get("score", 0) +
+                clinical_management.get("score", 0) +
+                interpersonal_skills.get("score", 0)) / 3
+            )
+            self.client.table("clinical_sessions").update({
+                "status": "completed",
+                "completed_at": datetime.now().isoformat(),
+                "overall_score": overall
+            }).eq("id", session_id).execute()
             
             logger.info(f"Saved feedback for session {session_id}")
             return True

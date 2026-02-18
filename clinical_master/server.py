@@ -54,6 +54,24 @@ async def lifespan(app: FastAPI):
     logger.info("Clinical Master shutting down")
 
 
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+
+class WSDebugMiddleware:
+    """Temporary debug middleware to log WebSocket connection details."""
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] == "websocket":
+            from starlette.datastructures import Headers
+            headers = Headers(scope=scope)
+            origin = headers.get("origin", "NO-ORIGIN")
+            path = scope.get("path", "?")
+            logger.info(f"WS DEBUG: path={path} origin={origin}")
+        await self.app(scope, receive, send)
+
+
 app = FastAPI(
     title="Clinical Master",
     description="SCA Consultation Voice Simulator - Azure OpenAI Realtime",
@@ -61,10 +79,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Debug middleware runs first (outermost)
+app.add_middleware(WSDebugMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -176,6 +197,14 @@ async def complete_session(session_id: str, request: CompleteSessionRequest):
             "feedback": existing_feedback,
         }
     
+    # Check if feedback is already being generated (by _on_timer_end)
+    if session_id in session_manager.feedback_generating:
+        return {
+            "status": "processing",
+            "session_id": session_id,
+            "message": "Feedback generation already in progress",
+        }
+    
     # Check if we have a transcript from the WebSocket session
     ws_transcript = session_manager.transcripts.get(session_id)
     transcript = ws_transcript if ws_transcript else (request.transcript or [])
@@ -205,16 +234,31 @@ async def get_feedback(session_id: str):
     feedback = session_manager.get_feedback(session_id)
     
     if feedback is None:
+        # Resolve ws session_id → db session_id for database lookup
+        db_session_id = session_manager.get_db_session_id(session_id) or session_id
+        
         # Check database
         try:
             repo = SessionRepository()
-            session_data = repo.get_session_with_results(session_id)
+            session_data = repo.get_session_with_results(db_session_id)
             if session_data and session_data.get("session_results"):
                 results = session_data["session_results"]
+                # Handle both list and single-object shapes from Supabase
                 if isinstance(results, list) and results:
+                    row = results[0]
+                elif isinstance(results, dict):
+                    row = results
+                else:
+                    row = None
+                if row:
+                    station_info = session_data.get("stations") or {}
                     return {
                         "status": "ready",
-                        "feedback": results[0],
+                        "feedback": _normalize_db_feedback(
+                            row,
+                            station_title=station_info.get("title"),
+                            overall_score=session_data.get("overall_score"),
+                        ),
                         "source": "database",
                     }
         except Exception as e:
@@ -236,6 +280,31 @@ async def get_feedback(session_id: str):
         "feedback": feedback,
         "source": "session_manager",
     }
+
+
+def _normalize_db_feedback(row: dict, station_title: str = None, overall_score: int = None) -> dict:
+    """Transform flat DB session_results row into nested ConsultationFeedback shape."""
+    def _domain(name: str, score_key: str, feedback_key: str) -> dict:
+        fb = row.get(feedback_key) or {}
+        return {
+            "domain": name,
+            "score": row.get(score_key, 0),
+            "strengths": fb.get("strengths", []),
+            "improvements": fb.get("improvements", []),
+        }
+
+    result = {
+        "data_gathering": _domain("Data Gathering", "data_gathering_score", "data_gathering_feedback"),
+        "clinical_management": _domain("Clinical Management", "clinical_management_score", "clinical_management_feedback"),
+        "interpersonal_skills": _domain("Interpersonal Skills", "interpersonal_skills_score", "interpersonal_skills_feedback"),
+        "overall_summary": row.get("overall_summary", ""),
+        "key_learning_points": row.get("key_learning_points", []),
+    }
+    if station_title:
+        result["station_title"] = station_title
+    if overall_score is not None:
+        result["overall_score"] = overall_score
+    return result
 
 
 @app.get("/session/{session_id}")

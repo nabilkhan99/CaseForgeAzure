@@ -133,6 +133,18 @@ def _apply_azure_compat_patch():
 
             event_type = event.get("type", "")
 
+            # DEBUG: Log ALL incoming events
+            if event_type in ("session.created", "session.updated", "error"):
+                session_data = event.get("session", {})
+                instr = session_data.get("instructions", "NOT_IN_EVENT")
+                if isinstance(instr, str) and len(instr) > 80:
+                    instr = instr[:80] + "..."
+                # Log audio sub-object structure to understand Azure GA nesting
+                audio_obj = session_data.get("audio", {})
+                logger.info(f"INCOMING {event_type}: instructions={instr}, keys={list(session_data.keys()) if session_data else 'N/A'}, audio={audio_obj}")
+                if event_type == "error":
+                    logger.info(f"INCOMING error detail: {event}")
+
             # 0. Rewrite GA event types → preview equivalents
             if event_type in _EVENT_TYPE_MAP:
                 new_type = _EVENT_TYPE_MAP[event_type]
@@ -166,6 +178,136 @@ def _apply_azure_compat_patch():
             return await original_handle(self, event)
 
         OpenAIRealtimeWebSocketModel._handle_ws_event = _patched_handle_ws_event
+
+        # Patch outgoing messages to inject Azure GA required fields and
+        # transform SDK field names to Azure GA format.
+        #
+        # Key differences between OpenAI preview and Azure GA:
+        #   SDK (OpenAI preview)            →  Azure GA
+        #   ─────────────────────────────────────────────────
+        #   input_audio_format: "pcm16"     →  audio.input.format: "pcm16"
+        #   output_audio_format: "pcm16"    →  audio.output.format: "pcm16"
+        #   input_audio_transcription: {}   →  audio.input.transcription: {}
+        #   model: "..."                    →  (removed — set via URL)
+        #   (missing)                       →  type: "realtime" (required)
+        from websockets.asyncio.client import ClientConnection as _ClientConnection
+
+        original_ws_send = _ClientConnection.send
+
+        # Format string → Azure GA format object mapping
+        # SDK uses strings like "pcm16"; Azure GA uses objects like {"type": "audio/pcm", "rate": 24000}
+        _FORMAT_STRING_TO_OBJECT = {
+            "pcm16": {"type": "audio/pcm", "rate": 24000},
+            "g711_ulaw": {"type": "audio/g711-ulaw", "rate": 8000},
+            "g711_alaw": {"type": "audio/g711-alaw", "rate": 8000},
+        }
+
+        def _convert_audio_format(fmt):
+            """Convert an SDK format string to Azure GA format object if needed."""
+            if isinstance(fmt, str):
+                return _FORMAT_STRING_TO_OBJECT.get(fmt, {"type": fmt})
+            return fmt  # already an object
+
+        def _transform_session_for_azure_ga(session: dict) -> dict:
+            """Transform an SDK-format session dict into Azure GA format."""
+            # 1. Inject required session.type
+            if "type" not in session:
+                session["type"] = "realtime"
+
+            # 2. Remove model (set via URL in GA, and may cause issues)
+            session.pop("model", None)
+
+            # 3. Convert flat audio fields → nested audio object
+            #    Azure GA nests ALL audio config under session.audio:
+            #      audio.input.format (object!), audio.input.transcription,
+            #      audio.input.turn_detection, audio.input.noise_reduction
+            #      audio.output.format (object!), audio.output.voice, audio.output.speed
+            input_fmt = session.pop("input_audio_format", None)
+            output_fmt = session.pop("output_audio_format", None)
+            transcription = session.pop("input_audio_transcription", None)
+            turn_detection = session.pop("turn_detection", None)
+            noise_reduction = session.pop("input_audio_noise_reduction", None)
+            voice = session.pop("voice", None)
+            speed = session.pop("speed", None)
+
+            audio = session.get("audio", {}) or {}
+            needs_audio = False
+
+            # Audio input settings
+            audio_input = audio.get("input", {}) or {}
+            if input_fmt:
+                audio_input["format"] = _convert_audio_format(input_fmt)
+                needs_audio = True
+            if transcription:
+                audio_input["transcription"] = transcription
+                needs_audio = True
+            if turn_detection:
+                audio_input["turn_detection"] = turn_detection
+                needs_audio = True
+            if noise_reduction:
+                audio_input["noise_reduction"] = noise_reduction
+                needs_audio = True
+            if needs_audio or audio_input:
+                audio["input"] = audio_input
+
+            # Audio output settings
+            audio_output = audio.get("output", {}) or {}
+            if output_fmt:
+                audio_output["format"] = _convert_audio_format(output_fmt)
+                needs_audio = True
+            if voice:
+                audio_output["voice"] = voice
+                needs_audio = True
+            if speed:
+                audio_output["speed"] = speed
+                needs_audio = True
+            if audio_output:
+                audio["output"] = audio_output
+
+            if needs_audio:
+                session["audio"] = audio
+
+            # 4. Convert modalities → output_modalities (Azure GA naming)
+            modalities = session.pop("modalities", None)
+            if modalities is not None:
+                session["output_modalities"] = modalities
+
+            # 5. Strip any remaining fields that Azure GA doesn't recognise
+            #    Known GA top-level fields (from session.created response):
+            _GA_KNOWN_FIELDS = {
+                "type", "object", "id", "model", "output_modalities",
+                "instructions", "tools", "tool_choice", "max_output_tokens",
+                "tracing", "prompt", "expires_at", "audio", "include",
+                "max_response_output_tokens", "temperature",
+            }
+            unknown_fields = [k for k in list(session.keys()) if k not in _GA_KNOWN_FIELDS]
+            for field in unknown_fields:
+                val = session.pop(field)
+                logger.warning(f"Azure compat: stripping unknown field '{field}' (value={str(val)[:80]})")
+
+            return session
+
+        async def _patched_ws_send(ws_self, message, text=None):
+            if isinstance(message, str) and '"session.update"' in message:
+                try:
+                    msg_obj = json.loads(message)
+                    if msg_obj.get("type") == "session.update":
+                        session = msg_obj.get("session", {})
+                        session = _transform_session_for_azure_ga(session)
+                        msg_obj["session"] = session
+                        message = json.dumps(msg_obj)
+                        # Log for debugging
+                        instr = session.get("instructions", "NOT_SET")
+                        if isinstance(instr, str) and len(instr) > 100:
+                            instr = instr[:100] + "..."
+                        logger.info(f"Azure compat: transformed session.update → keys={list(session.keys())}")
+                        logger.info(f"OUTGOING session.update: instructions={instr}")
+                except Exception as e:
+                    logger.warning(f"Could not transform outgoing session.update: {e}")
+            return await original_ws_send(ws_self, message, text=text)
+
+        _ClientConnection.send = _patched_ws_send
+
         logger.info("Azure OpenAI GA compatibility patch applied")
     except Exception as e:
         logger.warning(f"Failed to apply Azure compat patch: {e}")
@@ -222,6 +364,7 @@ class SessionManager:
         self.transcripts: dict[str, list[dict]] = {}
         self.timers: dict[str, ConsultationTimer] = {}
         self.feedback_results: dict[str, dict] = {}
+        self.feedback_generating: set[str] = set()  # Guard against duplicate generation
         # Database session info: { session_id: { db_session_id, user_id, station_id, station_data } }
         self.db_sessions: dict[str, dict] = {}
         # Track seen item_ids per session for deduplication (SDK pattern)
@@ -335,6 +478,7 @@ class SessionManager:
                 },
                 "turn_detection": {
                     "type": settings.TURN_DETECTION_TYPE,
+                    "eagerness": settings.TURN_DETECTION_EAGERNESS,
                     "create_response": True,
                     "interrupt_response": True,
                 },
@@ -381,7 +525,10 @@ class SessionManager:
     
     async def disconnect(self, session_id: str):
         """Clean up session resources."""
-        logger.info(f"Session {session_id}: Disconnecting")
+        transcript = self.transcripts.get(session_id, [])
+        delta_buf = self.delta_buffers.get(session_id, {})
+        buf_summary = ", ".join(f"{k}:{len(v)}chars" for k, v in delta_buf.items()) if delta_buf else "empty"
+        logger.info(f"Session {session_id}: Disconnecting (transcript={len(transcript)} items, delta_buffers={buf_summary})")
         
         # Cancel timer
         if session_id in self.timers:
@@ -429,7 +576,7 @@ class SessionManager:
         
         if content:
             logger.info(f"Session {session_id}: Flushing {role} buffer: {content[:50]}...")
-            self.transcripts[session_id].append({
+            self.transcripts.setdefault(session_id, []).append({
                 "role": role,
                 "content": content,
                 "timestamp": datetime.now().isoformat(),
@@ -492,6 +639,9 @@ class SessionManager:
     
     async def _handle_event(self, session_id: str, event, websocket: WebSocket):
         """Handle a single event from the realtime session."""
+        # Log all non-audio event types for debugging transcript flow
+        if event.type != "audio":
+            logger.info(f"Session {session_id}: EVENT received → {event.type}")
         event_data: dict[str, Any] = {"type": event.type}
         
         if event.type == "audio":
@@ -515,38 +665,63 @@ class SessionManager:
                 await self._process_history_item(session_id, item, websocket)
             return
         
-        elif event.type == "audio_transcript_delta":
-            # Streaming transcript delta from the model
-            delta = getattr(event, "delta", "")
-            if delta:
-                self.delta_buffers.setdefault(session_id, {"user": "", "assistant": ""})
-                self.delta_buffers[session_id]["assistant"] += delta
-                
-                event_data = {
-                    "type": "transcript_delta",
-                    "item": {"role": "assistant", "content": delta}
-                }
-                try:
-                    await websocket.send_text(json.dumps(event_data))
-                except Exception:
-                    pass
-            return
+        elif event.type == "raw_model_event":
+            # The SDK wraps all model events as raw_model_event first.
+            # Extract transcript data from the underlying event.
+            raw = getattr(event, "data", None)
+            if raw is None:
+                return
             
-        elif event.type == "input_audio_transcript_delta":
-            # Streaming user transcript delta (from whisper-1)
-            delta = getattr(event, "delta", "")
-            if delta:
-                self.delta_buffers.setdefault(session_id, {"user": "", "assistant": ""})
-                self.delta_buffers[session_id]["user"] += delta
-                
-                event_data = {
-                    "type": "transcript_delta",
-                    "item": {"role": "user", "content": delta}
-                }
-                try:
-                    await websocket.send_text(json.dumps(event_data))
-                except Exception:
-                    pass
+            raw_type = getattr(raw, "type", "")
+            
+            if raw_type == "transcript_delta":
+                # Assistant audio transcript delta
+                delta = getattr(raw, "delta", "")
+                if delta:
+                    self.delta_buffers.setdefault(session_id, {"user": "", "assistant": ""})
+                    self.delta_buffers[session_id]["assistant"] += delta
+                    logger.debug(f"Session {session_id}: Assistant transcript delta: {delta[:50]}")
+                    
+                    try:
+                        await websocket.send_text(json.dumps({
+                            "type": "transcript_delta",
+                            "item": {"role": "assistant", "content": delta}
+                        }))
+                    except Exception:
+                        pass
+                return
+            
+            elif raw_type == "input_audio_transcription_completed":
+                # User audio transcription completed (whisper-1 result)
+                transcript_text = getattr(raw, "transcript", "")
+                if transcript_text:
+                    logger.info(f"Session {session_id}: User transcription completed: {transcript_text[:80]}...")
+                    self.transcripts.setdefault(session_id, []).append({
+                        "role": "user",
+                        "content": transcript_text,
+                        "timestamp": datetime.now().isoformat(),
+                        "item_id": getattr(raw, "item_id", None),
+                    })
+                    try:
+                        await websocket.send_text(json.dumps({
+                            "type": "transcript_delta",
+                            "item": {"role": "user", "content": transcript_text}
+                        }))
+                    except Exception:
+                        pass
+                return
+            
+            # Other raw model events - skip
+            return
+        
+        elif event.type == "audio_end":
+            # Audio playback ended — flush assistant buffer to transcript
+            self._flush_delta_buffer(session_id, "assistant")
+            return
+        
+        elif event.type == "agent_end":
+            # Agent turn ended — flush all buffers
+            self._flush_all_delta_buffers(session_id)
             return
         
         else:
@@ -676,8 +851,22 @@ class SessionManager:
         
         return self._extract_content(item)
     
+    def get_db_session_id(self, session_id: str) -> str | None:
+        """Resolve WebSocket session_id to database session_id."""
+        db_info = self.db_sessions.get(session_id, {})
+        return db_info.get('db_session_id')
+
     async def _generate_feedback(self, session_id: str, transcript: list[dict]):
         """Generate feedback asynchronously."""
+        # Guard against duplicate generation
+        if session_id in self.feedback_generating:
+            logger.info(f"Session {session_id}: Feedback already being generated, skipping")
+            return
+        if session_id in self.feedback_results:
+            logger.info(f"Session {session_id}: Feedback already exists, skipping")
+            return
+        self.feedback_generating.add(session_id)
+
         try:
             from ..ai_agents.feedback import generate_feedback
         except ImportError:
@@ -718,19 +907,19 @@ class SessionManager:
                         'data_gathering': {
                             'score': feedback_dict.get('data_gathering', {}).get('score', 0),
                             'strengths': feedback_dict.get('data_gathering', {}).get('strengths', []),
-                            'improvements': feedback_dict.get('data_gathering', {}).get('areas_for_improvement', [])
+                            'improvements': feedback_dict.get('data_gathering', {}).get('improvements', [])
                         },
                         'clinical_management': {
                             'score': feedback_dict.get('clinical_management', {}).get('score', 0),
                             'strengths': feedback_dict.get('clinical_management', {}).get('strengths', []),
-                            'improvements': feedback_dict.get('clinical_management', {}).get('areas_for_improvement', [])
+                            'improvements': feedback_dict.get('clinical_management', {}).get('improvements', [])
                         },
                         'interpersonal_skills': {
-                            'score': feedback_dict.get('relating_to_others', {}).get('score', 0),
-                            'strengths': feedback_dict.get('relating_to_others', {}).get('strengths', []),
-                            'improvements': feedback_dict.get('relating_to_others', {}).get('areas_for_improvement', [])
+                            'score': feedback_dict.get('interpersonal_skills', {}).get('score', 0),
+                            'strengths': feedback_dict.get('interpersonal_skills', {}).get('strengths', []),
+                            'improvements': feedback_dict.get('interpersonal_skills', {}).get('improvements', [])
                         },
-                        'overall_summary': feedback_dict.get('summary', ''),
+                        'overall_summary': feedback_dict.get('overall_summary', ''),
                         'key_learning_points': feedback_dict.get('key_learning_points', [])
                     }
                     self.db_repo.save_feedback(db_info['db_session_id'], db_feedback)
@@ -738,11 +927,11 @@ class SessionManager:
                     # Update domain progress if station has a domain
                     station_data = db_info.get('station_data', {})
                     if db_info.get('user_id') and station_data.get('domain_id'):
-                        overall_score = (
+                        overall_score = round((
                             db_feedback['data_gathering']['score'] +
                             db_feedback['clinical_management']['score'] +
                             db_feedback['interpersonal_skills']['score']
-                        ) // 3
+                        ) / 3)
                         passed = all([
                             db_feedback['data_gathering']['score'] >= 60,
                             db_feedback['clinical_management']['score'] >= 60,

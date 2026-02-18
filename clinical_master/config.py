@@ -29,7 +29,8 @@ class ClinicalMasterSettings(BaseSettings):
     AZURE_OPENAI_REALTIME_DEPLOYMENT: str = "gpt-realtime"
     DEFAULT_VOICE: str = "shimmer"
     TURN_DETECTION_TYPE: str = "semantic_vad"
-    NOISE_REDUCTION_TYPE: str = "near_field"
+    NOISE_REDUCTION_TYPE: str = "far_field"
+    TURN_DETECTION_EAGERNESS: str = "low"
     
     # Azure OpenAI - Chat Completions (feedback generation)
     AZURE_OPENAI_CHAT_DEPLOYMENT: str = "gpt-4.1"
