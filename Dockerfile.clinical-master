@@ -9,7 +9,7 @@ WORKDIR /app
 COPY clinical_master/ ./clinical_master/
 
 # Install dependencies
-RUN cd clinical_master && uv sync --frozen --no-dev 2>/dev/null || uv pip install --system -r <(uv pip compile pyproject.toml --no-header)
+RUN cd clinical_master && uv sync --no-dev || (uv pip compile pyproject.toml --no-header -o /tmp/requirements.txt && uv pip install --system -r /tmp/requirements.txt)
 
 # LiveKit agent uses its own port management (no explicit EXPOSE needed)
 # The agent connects outbound to LiveKit Cloud

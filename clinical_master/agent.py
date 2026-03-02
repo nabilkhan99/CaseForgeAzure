@@ -2,7 +2,7 @@
 Clinical Master — LiveKit Voice Agent
 
 LiveKit Agents entrypoint for real-time patient consultation simulator.
-Uses STT → LLM → TTS pipeline: Deepgram Nova-3 → Gemini 2.5 Flash → Cartesia Sonic-3.
+Uses STT → LLM → TTS pipeline: Deepgram Nova-3 → Cerebras Llama 4 Scout → Cartesia Sonic-3.
 
 Replaces the previous FastAPI + ADK Gemini Live implementation.
 """
@@ -23,6 +23,7 @@ from livekit.agents import (
     inference,
 )
 from livekit.agents.llm import ChatContext, ChatMessage, function_tool
+from livekit.plugins import openai
 
 from ai_agents.feedback import generate_feedback
 from ai_agents.patient import build_patient_prompt
@@ -50,7 +51,9 @@ class PatientAgent(Agent):
         super().__init__(
             instructions=prompt,
             stt=inference.STT("deepgram/nova-3"),
-            llm=inference.LLM("google/gemini-2.5-flash"),
+            llm=openai.LLM.with_cerebras(
+                model="gpt-oss-120b",
+            ),
             tts=inference.TTS("cartesia/sonic-3"),
         )
 
@@ -316,7 +319,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # Register close handler for transcript capture + feedback generation
     @session.on("close")
-    def on_close(ev: CloseEvent) -> None:
+    async def on_close(ev: CloseEvent) -> None:
         logger.info(f"Session closed, reason: {ev.reason}")
 
         # Extract transcript from session history
@@ -334,11 +337,9 @@ async def entrypoint(ctx: JobContext) -> None:
         except Exception as e:
             logger.error(f"Failed to save transcript: {e}")
 
-        # Kick off async feedback generation
-        asyncio.create_task(
-            _generate_and_save_feedback(
-                db_repo, db_session_id, transcript, station_data, user_id
-            )
+        # Await feedback generation directly (don't fire-and-forget)
+        await _generate_and_save_feedback(
+            db_repo, db_session_id, transcript, station_data, user_id
         )
 
 
