@@ -6,7 +6,7 @@ Uses the service role key for backend operations (bypasses RLS).
 
 import logging
 from supabase import create_client, Client
-from ..config import settings
+from config import settings
 
 logger = logging.getLogger(__name__)
 

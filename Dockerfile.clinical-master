@@ -1,18 +1,18 @@
 FROM python:3.11-slim
 
-WORKDIR /app
+# Install uv for fast dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
-# Install only the clinical_master dependencies
-COPY clinical_master/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR /app
 
 # Copy only the clinical_master package
 COPY clinical_master/ ./clinical_master/
 
-EXPOSE 8000
+# Install dependencies
+RUN cd clinical_master && uv sync --frozen --no-dev 2>/dev/null || uv pip install --system -r <(uv pip compile pyproject.toml --no-header)
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+# LiveKit agent uses its own port management (no explicit EXPOSE needed)
+# The agent connects outbound to LiveKit Cloud
 
-CMD ["uvicorn", "clinical_master.server:app", "--host", "0.0.0.0", "--port", "8000", "--ws", "wsproto"]
+# Start the LiveKit agent
+CMD ["uv", "run", "--directory", "clinical_master", "python", "agent.py", "start"]

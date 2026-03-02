@@ -1,7 +1,7 @@
 """
 Clinical Master Configuration
 
-Environment-based settings for ADK Gemini Live voice agent,
+Environment-based settings for LiveKit voice agent,
 feedback generation, and session management.
 """
 
@@ -17,18 +17,11 @@ _ENV_FILE = Path(__file__).parent / ".env"
 class ClinicalMasterSettings(BaseSettings):
     """Settings loaded from environment variables."""
 
-    # --- Gemini AI ---
+    # --- Google AI (for feedback agent — text-only) ---
     GOOGLE_API_KEY: str = ""
-    GOOGLE_GENAI_USE_VERTEXAI: str = "0"
-
-    # Model for real-time voice patient agent (native audio)
-    GEMINI_LIVE_MODEL: str = "gemini-2.5-flash-native-audio-preview-12-2025"
 
     # Model for text-based feedback generation
     GEMINI_FEEDBACK_MODEL: str = "gemini-2.5-flash"
-
-    # Voice preset for the patient agent
-    DEFAULT_VOICE: str = "Kore"
 
     # --- Session ---
     CONSULTATION_DURATION_SECONDS: int = 480  # 8 minutes default
@@ -37,6 +30,10 @@ class ClinicalMasterSettings(BaseSettings):
     # --- Database (Supabase) ---
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
+
+    # --- LiveKit (read automatically by LiveKit SDK from env) ---
+    # LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+    # These don't need to be in this settings class — the SDK reads them directly.
 
     class Config:
         env_file = str(_ENV_FILE)

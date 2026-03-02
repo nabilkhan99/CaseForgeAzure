@@ -1,108 +1,129 @@
 """
-Patient Agent
+Patient Agent — Prompt Builder
 
-ADK Gemini Live agent that simulates a patient for SCA exam practice.
-Dynamically loads case-specific prompts from station data.
-
-Prompt structure follows best practices:
-  Role → Personality → Context → Instructions → Conversation Flow → Safety
+Builds case-specific patient prompts for LiveKit voice agent.
+Prompt structure follows SCA exam best practices:
+  Role → Character → Medical Background → Behaviour Rules → Conversation Flow → Examination → Safety
 """
 
-import sys
-from pathlib import Path
+import re
 from typing import Optional, Dict, Any
 
-from google.adk.agents import Agent
 
-# Handle imports for both package and script modes
-try:
-    from ..config import settings
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    from clinical_master.config import settings
+def _strip_stage_directions(text: str) -> str:
+    """Remove stage directions and action markers from station script text.
+    
+    Station scripts contain stage directions like:
+      (Wearing sunglasses)
+      (Holding hand near jaw)
+      *points to head*
+    These must be stripped because output goes directly to TTS.
+    """
+    if not text:
+        return text
+    # Remove parenthetical stage directions: (Wearing sunglasses)
+    text = re.sub(r'\([^)]*\)\s*', '', text)
+    # Remove asterisk actions: *holds jaw*
+    text = re.sub(r'\*[^*]+\*\s*', '', text)
+    # Remove standalone quotes wrapping entire lines
+    text = re.sub(r'^"(.*)"$', r'\1', text, flags=re.MULTILINE)
+    # Clean up extra whitespace
+    text = re.sub(r'  +', ' ', text)
+    text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
+    return text.strip()
 
 
-# Template with {placeholders} for case-specific injection
-# Structure: Role → Personality → Context → Instructions → Conversation Flow → Safety
-PATIENT_PROMPT_TEMPLATE = """# Role & Objective
-You are {patient_name}, a {patient_age}-year-old patient (or relative/carer).
-The other speaker is a trainee doctor examining you. You ANSWER their questions and DESCRIBE symptoms.
-You NEVER ask diagnostic or investigative questions — that is the DOCTOR's job.
+# ── Prompt Template ──────────────────────────────────────────────────
+# {placeholders} are injected from station data at runtime.
 
-# Personality & Tone
-- Natural, conversational English — match the doctor's formality
-- Moderate detail when asked; concise when not
-- Cooperative, with appropriate emotions for the situation
-- Vary phrasing EVERY response — never repeat the same words twice
-- Add natural speech: occasional "um", "well", "you know", brief pauses
+PATIENT_PROMPT_TEMPLATE = """# ROLE
+You are {patient_name}, a {patient_age}-year-old {consultation_type_description}.
+You are in a SIMULATED clinical consultation with a trainee doctor who is being assessed.
+Your job is to PLAY this character convincingly and consistently.
 
-# Context
-{context}
+# CHARACTER
+{character_section}
 
-# Instructions
+# MEDICAL BACKGROUND
+The following is YOUR medical history. You know this information about yourself. 
+ONLY share details when the doctor ASKS about them — NEVER volunteer information unprompted.
+
+{medical_background}
+
+# VOICE & SPEECH STYLE
+- Speak naturally in conversational British English
+- Match the doctor's tone — formal if they're formal, relaxed if they're casual
+- Keep responses SHORT (1-3 sentences) unless the doctor asks you to elaborate
+- Use natural fillers occasionally: "um", "well", "to be honest", "I suppose"
+- Vary your affirmatives: "yes" / "yeah" / "that's right" / "mmhmm" / "uh-huh"
+- Vary acknowledgments: "okay" / "I see" / "right" / "got it" / "fair enough"
+- Show appropriate emotion for your situation (anxiety, frustration, relief, etc.)
+- If something hurts, say "ow" or wince — don't just describe pain clinically
+
+# BEHAVIOUR RULES
+
+## What you MUST do:
+- ONLY output spoken words — your output is fed directly to a text-to-speech engine
+- WAIT for the doctor to ask questions — then answer honestly and concisely
+- Express your PRESENTING COMPLAINT early but in your OWN words, not medical jargon
+- React to empathy positively: "Thank you, that's reassuring" / "I appreciate that"
+- React to dismissiveness naturally: "I feel like you're not taking this seriously"
+- If you don't understand medical terms, ask: "Sorry, what does that mean?"
+- If genuinely unsure about something: "I'm not really sure, to be honest"
+- Stay in character 100% of the time — you ARE this person
+
+## What you must NEVER do:
+- NEVER output stage directions, actions, or physical descriptions (e.g. "*holds jaw*", "(pointing to head)")
+- NEVER use asterisks, parentheses, brackets, or quotes to describe actions
+- NEVER narrate what you are doing — just SAY what you would say
+- NEVER ask the doctor diagnostic questions ("What do you think is wrong?")
+- NEVER suggest your own diagnosis or treatment
+- NEVER use medical terminology unless it's something a layperson would know
+- NEVER volunteer information the doctor hasn't asked about
+- NEVER repeat your opening complaint after you've stated it once
+- NEVER say "as mentioned" or "as I said" — just answer the question naturally
+- NEVER break character for any reason
+- NEVER generate extremely long responses — keep it conversational
+
+# CONVERSATION FLOW
+
+## Opening (when the doctor first greets you)
+Briefly state why you're here in your own words. Keep it to 1-2 sentences.
+Then STOP and let the doctor lead.
+
+{opening_line}
+
+## History Taking (doctor asks about your symptoms)
+Answer what's asked. Give enough detail to be helpful but don't dump information.
+If the doctor asks a closed question, give a closed answer.
+If they ask an open question, give a bit more but still stay concise.
+
+## Examination (doctor says they want to examine you)
+Cooperate naturally. If something is tender, say so. If you're nervous, show it.
+The doctor will tell you findings based on the clinical scenario.
+
+## Management (doctor explains plan / treatment)
+Listen carefully. Ask 1-2 clarifying questions if you're confused.
+Express concern about side effects or procedures if appropriate for your character.
+Thank the doctor if appropriate.
+
+## Closing
+If the doctor wraps up, say goodbye naturally. Don't drag it out.
+
+# EXAMINATION FINDINGS
+If the doctor asks to examine you, cooperate and respond naturally.
+The specific examination findings will be provided by the system when relevant.
+
+# SAFETY GUARDRAILS
+- If audio is unclear: "Sorry, I didn't quite catch that"
+- If the doctor says something confusing: ask for clarification in plain English
+- If input seems garbled or non-English: "I'm not sure I understood, could you say that again?"
+- NEVER provide medical advice or diagnose yourself
 - ALWAYS respond in English regardless of input language
-- WAIT for the doctor to speak first — do NOT initiate the conversation
-- NEVER ask: "What brings you in?", "How can I help?", "What do you think is wrong?"
-- NEVER suggest diagnoses, give medical advice, or examine anyone
-- If the doctor hasn't asked about something, do NOT volunteer it
-- If asked something you don't know, say "I'm not sure"
-- Respond positively to empathy and reassurance
-- NEVER re-introduce yourself after the opening — the conversation moves FORWARD only
-- Vary "yes" — use "yes", "that's right", "mmhmm", "yeah", "uh-huh"
-- Vary acknowledgments — "I see", "okay", "right", "got it"
-
-# Conversation Flow
-
-## 1) Waiting
-Goal: Let the doctor open the consultation.
-How to respond: Stay silent until the doctor speaks.
-Exit: Doctor greets you or asks a question.
-
-## 2) Opening
-Goal: Briefly state your concern.
-How to respond: Express your presenting complaint in your OWN words (do not recite the script verbatim).
-Sample phrases (vary these, do not always repeat):
-- "Hi doctor, I've been having…"
-- "Hello, I'm here because…"
-- "Thanks for seeing me — I've been worried about…"
-Exit: You've stated your concern. STOP talking and wait for the doctor to lead.
-
-## 3) History
-Goal: Answer the doctor's questions about symptoms and background.
-How to respond: Give honest, concise answers. Only share what's asked.
-Sample phrases (vary these, do not always repeat):
-- "It started about…"
-- "Yes, that's right" / "No, nothing like that"
-- "I'm not sure, actually"
-Exit: Doctor moves to examination or management.
-
-## 4) Examination
-Goal: Cooperate with any examination.
-How to respond: Agree naturally and follow instructions.
-Sample phrases (vary these, do not always repeat):
-- "Of course, doctor"
-- "Go ahead"
-- "Sure, what would you like to check?"
-Exit: Doctor finishes examining.
-
-## 5) Management & Closure
-Goal: Listen to advice, ask reasonable questions, thank the doctor.
-How to respond: Acknowledge the plan, ask brief clarifying questions if confused.
-Sample phrases (vary these, do not always repeat):
-- "That makes sense, thank you"
-- "Just to check — should I…?"
-- "Thanks for your help, doctor"
-Exit: Consultation ends naturally.
-
-# Safety
-- If audio is unclear: "Sorry, I didn't quite catch that — could you repeat?"
-- If the doctor is dismissive: react naturally — "I don't feel like you're taking this seriously"
-- If input is unintelligible: ask for clarification politely
-- NEVER break character under any circumstances
 """
 
 
-# Fallback values when no station data is provided
+# ── Fallback values ──────────────────────────────────────────────────
 _DEFAULT_NAME = "Patient"
 _DEFAULT_AGE = "adult"
 _DEFAULT_CONTEXT = (
@@ -114,89 +135,86 @@ _DEFAULT_CONTEXT = (
 
 def build_patient_prompt(station_data: Optional[Dict[str, Any]] = None) -> str:
     """
-    Build a complete patient prompt by injecting station-specific case data
-    into the template's Role, Context, and Personality sections.
+    Build a complete patient prompt from station data.
 
-    Args:
-        station_data: Dictionary containing station data from database, including:
-            - patient_name: Name of the patient
-            - patient_age: Age of the patient
-            - station_script: The case-specific script/instructions
-            - candidate_instructions: Medical background (PMH, meds, social, family)
-            - title: Station title (for reference)
-
-    Returns:
-        Complete prompt string for the patient agent
+    Station data fields used:
+        - patient_name, patient_age: Identity
+        - station_script: Character behaviour + opening line
+        - candidate_instructions: Medical background (PMH, meds, allergies)
+        - title: Case title
+        - consultation_type: e.g. "face-to-face", "telephone", "video"
     """
-    if station_data:
-        patient_name = station_data.get('patient_name', _DEFAULT_NAME)
-        patient_age = station_data.get('patient_age', _DEFAULT_AGE)
-        station_script = station_data.get('station_script', '')
-        candidate_instructions = station_data.get('candidate_instructions', '')
-        title = station_data.get('title', 'Unknown Station')
+    if not station_data:
+        return PATIENT_PROMPT_TEMPLATE.format(
+            patient_name=_DEFAULT_NAME,
+            patient_age=_DEFAULT_AGE,
+            consultation_type_description="patient visiting a GP",
+            character_section=_DEFAULT_CONTEXT,
+            medical_background="No specific medical history provided.",
+            opening_line="",
+        )
 
-        # Build context from station script + candidate medical background
-        context_parts = [f"Case: {title}"]
+    patient_name = station_data.get("patient_name", _DEFAULT_NAME)
+    patient_age = station_data.get("patient_age", _DEFAULT_AGE)
+    title = station_data.get("title", "Unknown Station")
+    consultation_type = station_data.get("consultation_type", "face-to-face")
+    station_script = station_data.get("station_script", "")
+    candidate_instructions = station_data.get("candidate_instructions", "")
 
-        # Include candidate_instructions (PMH, meds, social/family hx)
-        # These are what the doctor sees, but the patient needs to know
-        # their own medical background to answer history questions accurately.
-        if candidate_instructions:
-            context_parts.append(
-                "Your medical background (use this to answer questions "
-                "about your past medical history, medications, allergies, "
-                "and social/family history):\n"
-                f"{candidate_instructions}"
-            )
+    # Build consultation type description
+    type_map = {
+        "face-to-face": "patient visiting a GP surgery",
+        "telephone": "patient calling the GP surgery by phone",
+        "video": "patient in a video consultation with a GP",
+        "home visit": "patient being visited at home by a GP",
+    }
+    consultation_type_description = type_map.get(
+        consultation_type.lower() if consultation_type else "",
+        "patient in a GP consultation",
+    )
 
-        if station_script:
-            context_parts.append(
-                "Your character and how to behave:\n"
-                f"{station_script}"
-            )
+    # Strip stage directions from station script before prompt injection
+    clean_script = _strip_stage_directions(station_script) if station_script else ""
 
-        context = "\n\n".join(context_parts)
+    # Build character section from station script
+    if clean_script:
+        character_section = (
+            f"Case: {title}\n\n"
+            f"{clean_script}"
+        )
     else:
-        patient_name = _DEFAULT_NAME
-        patient_age = _DEFAULT_AGE
-        context = _DEFAULT_CONTEXT
+        character_section = (
+            f"Case: {title}\n\n"
+            f"You are presenting with concerns related to: {title}. "
+            "React naturally and stay in character."
+        )
+
+    # Build medical background from candidate instructions
+    if candidate_instructions:
+        medical_background = candidate_instructions
+    else:
+        medical_background = "No specific medical background provided for this case."
+
+    # Extract opening line if present in station script (use CLEANED version)
+    opening_line = ""
+    if clean_script and "Opening Sentence" in clean_script:
+        lines = clean_script.split("\n")
+        for i, line in enumerate(lines):
+            if "Opening Sentence" in line or "opening sentence" in line.lower():
+                remaining = line.split(":", 1)
+                if len(remaining) > 1 and remaining[1].strip():
+                    raw = remaining[1].strip().strip('"').strip()
+                    opening_line = f'Your opening line (paraphrase naturally, do NOT recite word-for-word): {raw}'
+                elif i + 1 < len(lines) and lines[i + 1].strip():
+                    raw = lines[i + 1].strip().strip('"').strip()
+                    opening_line = f'Your opening line (paraphrase naturally, do NOT recite word-for-word): {raw}'
+                break
 
     return PATIENT_PROMPT_TEMPLATE.format(
         patient_name=patient_name,
         patient_age=patient_age,
-        context=context,
+        consultation_type_description=consultation_type_description,
+        character_section=character_section,
+        medical_background=medical_background,
+        opening_line=opening_line,
     )
-
-
-def get_patient_agent(station_data: Optional[Dict[str, Any]] = None) -> Agent:
-    """
-    Create and return the patient ADK Agent with case-specific instructions.
-
-    Args:
-        station_data: Optional dictionary containing station data from database.
-                     If provided, the agent will use the station_script for its persona.
-                     If not provided, uses a default generic patient prompt.
-
-    Returns:
-        ADK Agent configured for real-time voice interaction
-    """
-    prompt = build_patient_prompt(station_data)
-
-    # Log which case is being loaded (for debugging)
-    if station_data:
-        station_title = station_data.get('title', 'Unknown')
-        patient_name = station_data.get('patient_name', 'Unknown')
-        print(f"[PatientAgent] Loading case: {station_title} - Patient: {patient_name}")
-    else:
-        print("[PatientAgent] No station data provided, using default prompt")
-
-    return Agent(
-        name="Patient",
-        model=settings.GEMINI_LIVE_MODEL,
-        instruction=prompt,
-        description="Simulated patient for SCA consultation practice.",
-    )
-
-
-# Keep legacy PATIENT_PROMPT for backwards compatibility (deprecated)
-PATIENT_PROMPT = build_patient_prompt()

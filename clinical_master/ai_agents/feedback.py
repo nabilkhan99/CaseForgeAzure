@@ -17,12 +17,7 @@ from google import genai
 from google.genai import types as genai_types
 from pydantic import BaseModel, Field
 
-# Handle imports for both package and script modes
-try:
-    from ..config import settings
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    from clinical_master.config import settings
+from config import settings
 
 logger = logging.getLogger(__name__)
 
