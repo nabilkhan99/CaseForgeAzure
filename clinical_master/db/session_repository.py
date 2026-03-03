@@ -79,25 +79,56 @@ class SessionRepository:
             logger.error(f"Error creating session: {e}")
             return None
 
-    def upsert_session(self, session_id: str, user_id: str, station_id: str) -> Optional[dict]:
+    def upsert_session(self, session_id: str, user_id: Optional[str], station_id: str) -> Optional[dict]:
         """
         Ensure a clinical session exists with the given ID.
         Creates it if missing, no-op if it already exists.
+        Accepts user_id=None for guest/anonymous sessions.
         """
         try:
+            data: dict[str, Any] = {
+                "id": session_id,
+                "station_id": station_id,
+                "status": "reading",
+            }
+            if user_id is not None:
+                data["user_id"] = user_id
+            
             result = self.client.table("clinical_sessions").upsert(
-                {
-                    "id": session_id,
-                    "user_id": user_id,
-                    "station_id": station_id,
-                    "status": "reading",
-                },
+                data,
                 on_conflict="id",
             ).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Error upserting session {session_id}: {e}")
             return None
+
+    def claim_session(self, session_id: str, user_id: str) -> bool:
+        """
+        Associate a guest/anonymous session with a newly-authenticated user.
+        Only updates if the session currently has no user_id (NULL).
+        
+        Args:
+            session_id: UUID of the session to claim
+            user_id: UUID of the authenticated user
+            
+        Returns:
+            True if the session was claimed successfully
+        """
+        try:
+            result = self.client.table("clinical_sessions").update(
+                {"user_id": user_id}
+            ).eq("id", session_id).is_("user_id", "null").execute()
+            
+            if result.data:
+                logger.info(f"Claimed session {session_id} for user {user_id}")
+                return True
+            else:
+                logger.warning(f"Session {session_id} was not claimed — may already have a user")
+                return False
+        except Exception as e:
+            logger.error(f"Error claiming session {session_id}: {e}")
+            return False
     
     def update_session_status(self, session_id: str, status: str) -> bool:
         """

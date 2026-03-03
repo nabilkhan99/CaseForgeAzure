@@ -231,17 +231,17 @@ async def entrypoint(ctx: JobContext) -> None:
             logger.info(f"Loaded station: {station_data.get('title')}")
 
             # Ensure the DB session exists — create with the frontend's UUID if needed
-            if user_id:
-                if db_session_id:
-                    # Frontend provided a session ID — upsert to ensure it exists in DB
-                    db_repo.upsert_session(db_session_id, user_id, station_data["id"])
-                    logger.info(f"Ensured DB session exists: {db_session_id}")
-                else:
-                    # No session ID from frontend — create a new one
-                    db_session = db_repo.create_session(user_id, station_data["id"])
-                    if db_session:
-                        db_session_id = db_session["id"]
-                        logger.info(f"Created DB session: {db_session_id}")
+            if db_session_id:
+                # Frontend provided a session ID — upsert to ensure it exists in DB
+                # user_id can be None for guest/anonymous sessions
+                db_repo.upsert_session(db_session_id, user_id, station_data["id"])
+                logger.info(f"Ensured DB session exists: {db_session_id} (user={user_id or 'guest'})")
+            elif user_id:
+                # No session ID from frontend — create a new one (authenticated only)
+                db_session = db_repo.create_session(user_id, station_data["id"])
+                if db_session:
+                    db_session_id = db_session["id"]
+                    logger.info(f"Created DB session: {db_session_id}")
         else:
             logger.warning("No station found in database — using default patient")
 
