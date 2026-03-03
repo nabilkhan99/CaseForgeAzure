@@ -78,6 +78,26 @@ class SessionRepository:
         except Exception as e:
             logger.error(f"Error creating session: {e}")
             return None
+
+    def upsert_session(self, session_id: str, user_id: str, station_id: str) -> Optional[dict]:
+        """
+        Ensure a clinical session exists with the given ID.
+        Creates it if missing, no-op if it already exists.
+        """
+        try:
+            result = self.client.table("clinical_sessions").upsert(
+                {
+                    "id": session_id,
+                    "user_id": user_id,
+                    "station_id": station_id,
+                    "status": "reading",
+                },
+                on_conflict="id",
+            ).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            logger.error(f"Error upserting session {session_id}: {e}")
+            return None
     
     def update_session_status(self, session_id: str, status: str) -> bool:
         """

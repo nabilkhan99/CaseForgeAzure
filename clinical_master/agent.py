@@ -2,7 +2,7 @@
 Clinical Master — LiveKit Voice Agent
 
 LiveKit Agents entrypoint for real-time patient consultation simulator.
-Uses STT → LLM → TTS pipeline: Deepgram Nova-3 → Cerebras Llama 4 Scout → Cartesia Sonic-3.
+Uses STT → LLM → TTS pipeline: Deepgram Nova-3 → OpenAI GPT-4.1-mini → Cartesia Sonic-3.
 
 Replaces the previous FastAPI + ADK Gemini Live implementation.
 """
@@ -25,7 +25,6 @@ from livekit.agents import (
 from livekit.agents.llm import ChatContext, ChatMessage, function_tool
 from livekit.plugins import openai
 
-from ai_agents.feedback import generate_feedback
 from ai_agents.patient import build_patient_prompt
 from config import settings
 from db.session_repository import SessionRepository
@@ -51,8 +50,8 @@ class PatientAgent(Agent):
         super().__init__(
             instructions=prompt,
             stt=inference.STT("deepgram/nova-3"),
-            llm=openai.LLM.with_cerebras(
-                model="gpt-oss-120b",
+            llm=openai.LLM(
+                model="gpt-4.1-mini",
                 temperature=0.7,
             ),
             tts=inference.TTS("cartesia/sonic-3"),
@@ -175,76 +174,7 @@ def _extract_transcript(
     return transcript
 
 
-def _build_case_brief(station_data: dict | None) -> str:
-    """Build a case brief string from station data for feedback context."""
-    if station_data:
-        return (
-            f"{station_data.get('patient_name', 'Unknown')}, "
-            f"{station_data.get('patient_age', 'Unknown')}-year-old. "
-            f"{station_data.get('candidate_instructions', '') or ''}"
-        )
-    return (
-        "Clinical consultation case. Assess the candidate's "
-        "data gathering, clinical management, and interpersonal skills."
-    )
 
-
-def _build_marking_criteria(station_data: dict | None) -> str | None:
-    """Extract case-specific marking criteria from station data."""
-    if not station_data:
-        return None
-
-    sections: list[str] = []
-    if station_data.get("data_gathering"):
-        sections.append(f"## Data Gathering Criteria\n{station_data['data_gathering']}")
-    if station_data.get("clinical_management"):
-        sections.append(f"## Clinical Management Criteria\n{station_data['clinical_management']}")
-    if station_data.get("relating_to_others"):
-        sections.append(f"## Interpersonal Skills Criteria\n{station_data['relating_to_others']}")
-
-    return "\n\n".join(sections) if sections else None
-
-
-async def _generate_and_save_feedback(
-    db_repo: SessionRepository,
-    db_session_id: str,
-    transcript: list[dict],
-    station_data: dict | None,
-    user_id: str | None,
-) -> None:
-    """Async helper: generate feedback and persist to Supabase."""
-    try:
-        case_brief = _build_case_brief(station_data)
-        marking_criteria = _build_marking_criteria(station_data)
-        feedback = await generate_feedback(transcript, case_brief, marking_criteria)
-        feedback_dict = feedback.model_dump()
-        logger.info("Feedback generated successfully")
-
-        db_repo.save_feedback(db_session_id, feedback_dict)
-
-        # Update domain progress
-        if user_id and station_data and station_data.get("domain_id"):
-            overall_score = round(
-                (
-                    feedback_dict["data_gathering"]["score"]
-                    + feedback_dict["clinical_management"]["score"]
-                    + feedback_dict["interpersonal_skills"]["score"]
-                )
-                / 3
-            )
-            passed = all(
-                feedback_dict[d]["score"] >= 60
-                for d in ["data_gathering", "clinical_management", "interpersonal_skills"]
-            )
-            db_repo.update_domain_progress(
-                user_id,
-                station_data["domain_id"],
-                overall_score,
-                passed,
-            )
-
-    except Exception as e:
-        logger.error(f"Feedback generation failed: {e}")
 
 
 # ── LiveKit Server Setup ─────────────────────────────────────────
@@ -300,12 +230,18 @@ async def entrypoint(ctx: JobContext) -> None:
         if station_data:
             logger.info(f"Loaded station: {station_data.get('title')}")
 
-            # Create DB session if not pre-created
-            if user_id and not db_session_id:
-                db_session = db_repo.create_session(user_id, station_data["id"])
-                if db_session:
-                    db_session_id = db_session["id"]
-                    logger.info(f"Created DB session: {db_session_id}")
+            # Ensure the DB session exists — create with the frontend's UUID if needed
+            if user_id:
+                if db_session_id:
+                    # Frontend provided a session ID — upsert to ensure it exists in DB
+                    db_repo.upsert_session(db_session_id, user_id, station_data["id"])
+                    logger.info(f"Ensured DB session exists: {db_session_id}")
+                else:
+                    # No session ID from frontend — create a new one
+                    db_session = db_repo.create_session(user_id, station_data["id"])
+                    if db_session:
+                        db_session_id = db_session["id"]
+                        logger.info(f"Created DB session: {db_session_id}")
         else:
             logger.warning("No station found in database — using default patient")
 
@@ -347,43 +283,26 @@ async def entrypoint(ctx: JobContext) -> None:
             "IMPORTANT: Output ONLY spoken words. No stage directions, no actions, no asterisks."
         )
 
-    # Shared event so the entrypoint can wait for feedback to finish
-    feedback_done = asyncio.Event()
-
-    # Register close handler for transcript capture + feedback generation
-    # NOTE: LiveKit `.on()` requires SYNC callbacks — use create_task inside
+    # Register close handler — save transcript and set status to "processing".
+    # Feedback generation is handled by the frontend API route (agent process
+    # is killed by LiveKit after 10s, too short for Gemini feedback calls).
     @session.on("close")
     def on_close(ev: CloseEvent) -> None:
         logger.info(f"Session closed, reason: {ev.reason}")
 
-        # Extract transcript from session history (with pre-recorded timestamps)
         transcript = _extract_transcript(session, agent._message_timestamps)
         logger.info(f"Extracted {len(transcript)} transcript entries")
 
         if not db_repo or not db_session_id:
-            logger.warning("No DB repo/session — skipping persistence")
-            feedback_done.set()
+            logger.warning("No DB repo/session — skipping transcript save")
             return
 
-        # Save transcript (sync DB calls)
         try:
             db_repo.save_transcript(db_session_id, transcript)
             db_repo.update_session_status(db_session_id, "processing")
+            logger.info("Transcript saved, status set to 'processing'")
         except Exception as e:
             logger.error(f"Failed to save transcript: {e}")
-
-        async def _do_feedback() -> None:
-            try:
-                await _generate_and_save_feedback(
-                    db_repo, db_session_id, transcript, station_data, user_id
-                )
-            finally:
-                feedback_done.set()
-
-        asyncio.create_task(_do_feedback())
-
-    # Keep the entrypoint alive until session closes AND feedback finishes
-    await feedback_done.wait()
 
 
 if __name__ == "__main__":
