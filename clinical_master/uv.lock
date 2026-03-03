@@ -422,6 +422,11 @@ dev = [
     { name = "pytest-asyncio" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "google-genai" },
@@ -434,6 +439,9 @@ requires-dist = [
     { name = "supabase" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "colorama"

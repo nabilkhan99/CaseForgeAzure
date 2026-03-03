@@ -53,6 +53,7 @@ class PatientAgent(Agent):
             stt=inference.STT("deepgram/nova-3"),
             llm=openai.LLM.with_cerebras(
                 model="gpt-oss-120b",
+                temperature=0.7,
             ),
             tts=inference.TTS("cartesia/sonic-3"),
         )
@@ -65,6 +66,9 @@ class PatientAgent(Agent):
         # Timer management
         self._timer_task: asyncio.Task | None = None
         self._consultation_ended = False
+
+        # Per-message timestamps for accurate transcript timing
+        self._message_timestamps: list[str] = []
 
     async def on_enter(self) -> None:
         """Called when the agent starts handling a room."""
@@ -102,6 +106,7 @@ class PatientAgent(Agent):
         user_text = new_message.text_content
         if user_text:
             logger.info(f"[Doctor] {user_text[:80]}...")
+            self._message_timestamps.append(datetime.now().isoformat())
 
     @function_tool
     async def request_examination(self, examination_type: str) -> str:
@@ -143,22 +148,30 @@ class PatientAgent(Agent):
             )
 
 
-def _extract_transcript(session: AgentSession) -> list[dict]:
+def _extract_transcript(
+    session: AgentSession, message_timestamps: list[str] | None = None
+) -> list[dict]:
     """
     Extract a clean transcript from the AgentSession history.
     Converts LiveKit chat items into our SCA transcript format.
+    Uses pre-recorded timestamps where available.
     """
     transcript: list[dict] = []
+    ts_list = message_timestamps or []
+    msg_idx = 0
     for item in session.history.items:
         if item.type == "message":
             content = item.text_content
             if content and content.strip():
                 role = "user" if item.role == "user" else "assistant"
+                # Use pre-recorded timestamp if available, else fallback
+                ts = ts_list[msg_idx] if msg_idx < len(ts_list) else datetime.now().isoformat()
                 transcript.append({
                     "role": role,
                     "content": content.strip(),
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": ts,
                 })
+                msg_idx += 1
     return transcript
 
 
@@ -168,12 +181,28 @@ def _build_case_brief(station_data: dict | None) -> str:
         return (
             f"{station_data.get('patient_name', 'Unknown')}, "
             f"{station_data.get('patient_age', 'Unknown')}-year-old. "
-            f"{(station_data.get('candidate_instructions', '') or '')[:500]}"
+            f"{station_data.get('candidate_instructions', '') or ''}"
         )
     return (
         "Clinical consultation case. Assess the candidate's "
         "data gathering, clinical management, and interpersonal skills."
     )
+
+
+def _build_marking_criteria(station_data: dict | None) -> str | None:
+    """Extract case-specific marking criteria from station data."""
+    if not station_data:
+        return None
+
+    sections: list[str] = []
+    if station_data.get("data_gathering"):
+        sections.append(f"## Data Gathering Criteria\n{station_data['data_gathering']}")
+    if station_data.get("clinical_management"):
+        sections.append(f"## Clinical Management Criteria\n{station_data['clinical_management']}")
+    if station_data.get("relating_to_others"):
+        sections.append(f"## Interpersonal Skills Criteria\n{station_data['relating_to_others']}")
+
+    return "\n\n".join(sections) if sections else None
 
 
 async def _generate_and_save_feedback(
@@ -186,7 +215,8 @@ async def _generate_and_save_feedback(
     """Async helper: generate feedback and persist to Supabase."""
     try:
         case_brief = _build_case_brief(station_data)
-        feedback = await generate_feedback(transcript, case_brief)
+        marking_criteria = _build_marking_criteria(station_data)
+        feedback = await generate_feedback(transcript, case_brief, marking_criteria)
         feedback_dict = feedback.model_dump()
         logger.info("Feedback generated successfully")
 
@@ -317,17 +347,22 @@ async def entrypoint(ctx: JobContext) -> None:
             "IMPORTANT: Output ONLY spoken words. No stage directions, no actions, no asterisks."
         )
 
+    # Shared event so the entrypoint can wait for feedback to finish
+    feedback_done = asyncio.Event()
+
     # Register close handler for transcript capture + feedback generation
+    # NOTE: LiveKit `.on()` requires SYNC callbacks — use create_task inside
     @session.on("close")
-    async def on_close(ev: CloseEvent) -> None:
+    def on_close(ev: CloseEvent) -> None:
         logger.info(f"Session closed, reason: {ev.reason}")
 
-        # Extract transcript from session history
-        transcript = _extract_transcript(session)
+        # Extract transcript from session history (with pre-recorded timestamps)
+        transcript = _extract_transcript(session, agent._message_timestamps)
         logger.info(f"Extracted {len(transcript)} transcript entries")
 
         if not db_repo or not db_session_id:
             logger.warning("No DB repo/session — skipping persistence")
+            feedback_done.set()
             return
 
         # Save transcript (sync DB calls)
@@ -337,10 +372,18 @@ async def entrypoint(ctx: JobContext) -> None:
         except Exception as e:
             logger.error(f"Failed to save transcript: {e}")
 
-        # Await feedback generation directly (don't fire-and-forget)
-        await _generate_and_save_feedback(
-            db_repo, db_session_id, transcript, station_data, user_id
-        )
+        async def _do_feedback() -> None:
+            try:
+                await _generate_and_save_feedback(
+                    db_repo, db_session_id, transcript, station_data, user_id
+                )
+            finally:
+                feedback_done.set()
+
+        asyncio.create_task(_do_feedback())
+
+    # Keep the entrypoint alive until session closes AND feedback finishes
+    await feedback_done.wait()
 
 
 if __name__ == "__main__":

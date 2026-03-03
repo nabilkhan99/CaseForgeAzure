@@ -100,7 +100,9 @@ You MUST respond with a single JSON object matching the ConsultationFeedback sch
 """
 
 
-async def generate_feedback(transcript: List[dict], case_brief: str) -> ConsultationFeedback:
+async def generate_feedback(
+    transcript: List[dict], case_brief: str, marking_criteria: str | None = None
+) -> ConsultationFeedback:
     """
     Generate structured feedback from a consultation transcript.
     
@@ -109,6 +111,7 @@ async def generate_feedback(transcript: List[dict], case_brief: str) -> Consulta
     Args:
         transcript: List of {role, content, timestamp} dicts
         case_brief: Summary of the case for context
+        marking_criteria: Optional case-specific rubric for scoring
     
     Returns:
         ConsultationFeedback with scores and learning points
@@ -145,12 +148,17 @@ async def generate_feedback(transcript: List[dict], case_brief: str) -> Consulta
         if t.get('content')
     ])
     
+    # Build marking criteria section
+    criteria_section = ""
+    if marking_criteria:
+        criteria_section = f"\n# Case-Specific Marking Criteria\n{marking_criteria}\n"
+    
     prompt = f"""
 {FEEDBACK_PROMPT}
 
 # Case Context
 {case_brief}
-
+{criteria_section}
 # Consultation Transcript
 {transcript_text}
 
