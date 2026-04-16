@@ -18,7 +18,11 @@
       "cors": {
         "allowedOrigins": [
           "http://localhost:3000",
-          "caseforge2025a.azurewebsites.net",
+          "http://localhost:3002",
+          "https://fourteenfisherman.com",
+          "https://www.fourteenfisherman.com",
+          "https://case-forge-frontend-n5fd.vercel.app",
+          "https://case-forge-frontend-n5fd-gvwt7djho-nabil-khans-projects.vercel.app",
           "https://caseforge2025a.azurewebsites.net",
           "https://caseforge2025a.azurewebsites.net/api"
         ],
