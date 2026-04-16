@@ -129,6 +129,8 @@ class PatientAgent(Agent):
         logger.info("[PatientAgent] Doctor ended consultation via tool call")
         if not self._consultation_ended:
             self._consultation_ended = True
+            # Schedule disconnect after goodbye — gives TTS time to finish
+            asyncio.create_task(self._delayed_disconnect(delay=8))
         return "Thank you doctor. The consultation has ended. Feedback is being generated."
 
     # ── Private Helpers ──────────────────────────────────────────
@@ -140,11 +142,21 @@ class PatientAgent(Agent):
         if not self._consultation_ended:
             self._consultation_ended = True
             logger.info("[PatientAgent] Timer expired — ending consultation")
-            # Tell the agent to wrap up
+            # Tell the agent to wrap up, then disconnect
             self.session.generate_reply(
                 instructions="The consultation time has ended. "
                 "Thank the doctor and say goodbye naturally."
             )
+            await self._delayed_disconnect(delay=10)
+
+    async def _delayed_disconnect(self, delay: int = 8) -> None:
+        """Wait for TTS to finish, then close the session."""
+        await asyncio.sleep(delay)
+        try:
+            self.session.shutdown(drain=True)
+            logger.info("[PatientAgent] Session shutdown after delay")
+        except Exception as e:
+            logger.warning(f"[PatientAgent] Shutdown error (non-fatal): {e}")
 
 
 def _extract_transcript(
@@ -295,14 +307,18 @@ async def entrypoint(ctx: JobContext) -> None:
 
         if not db_repo or not db_session_id:
             logger.warning("No DB repo/session — skipping transcript save")
-            return
+        else:
+            try:
+                db_repo.save_transcript(db_session_id, transcript)
+                db_repo.update_session_status(db_session_id, "processing")
+                logger.info("Transcript saved, status set to 'processing'")
+            except Exception as e:
+                logger.error(f"Failed to save transcript: {e}")
 
-        try:
-            db_repo.save_transcript(db_session_id, transcript)
-            db_repo.update_session_status(db_session_id, "processing")
-            logger.info("Transcript saved, status set to 'processing'")
-        except Exception as e:
-            logger.error(f"Failed to save transcript: {e}")
+        # Release memory — drop references to large objects
+        agent._station_data = {}
+        agent._message_timestamps.clear()
+        agent._db_repo = None
 
 
 if __name__ == "__main__":

@@ -1,25 +1,14 @@
 """
-Feedback Agent
+Feedback Models
 
-Text-based agent that analyzes consultation transcripts
-and generates structured feedback aligned with SCA marking domains.
-
-Uses Gemini via google-genai for single-shot structured output.
+Pydantic models for structured consultation feedback.
+Feedback generation is handled by a Supabase Edge Function (not this agent process).
+These models are kept as shared schema definitions.
 """
 
-import json
-import logging
-import sys
-from pathlib import Path
 from typing import List
 
-from google import genai
-from google.genai import types as genai_types
 from pydantic import BaseModel, Field
-
-from config import settings
-
-logger = logging.getLogger(__name__)
 
 
 class DomainScore(BaseModel):
@@ -37,156 +26,3 @@ class ConsultationFeedback(BaseModel):
     interpersonal_skills: DomainScore = Field(description="Assessment of communication, empathy, and rapport")
     overall_summary: str = Field(description="Brief overall summary of the consultation")
     key_learning_points: List[str] = Field(description="3-5 key takeaways for the trainee")
-
-
-FEEDBACK_PROMPT = """
-You are an experienced RCGP SCA examiner providing constructive feedback on a GP trainee's consultation.
-
-# Your Role
-Analyze the consultation transcript and provide balanced, specific feedback that will help the trainee improve.
-Use the case-specific marking criteria provided in the input to assess the trainee's performance accurately.
-
-# Assessment Domains
-
-## 1. Data Gathering (History Taking)
-- Systematic questioning
-- Identification of presenting complaint
-- Exploration of red flag symptoms  
-- Past medical history, medications, allergies
-- Social and family history
-- ICE (Ideas, Concerns, Expectations)
-- **Use the case-specific Data Gathering criteria if provided**
-
-## 2. Clinical Management
-- Appropriate differential diagnosis
-- Justified investigations
-- Clear management plan
-- Safety-netting advice
-- Follow-up arrangements
-- Appropriate referral decisions
-- **Use the case-specific Clinical Management criteria if provided**
-
-## 3. Interpersonal Skills
-- Rapport building
-- Active listening
-- Empathy and reassurance
-- Clear explanations
-- Shared decision-making
-- Professional manner
-- **Use the case-specific Interpersonal Skills criteria if provided**
-
-# Scoring Guidelines
-- 80-100: Excellent - comprehensive, thorough, no significant omissions
-- 60-79: Good - most key areas covered with minor gaps
-- 40-59: Adequate - some important areas missed
-- 20-39: Needs improvement - significant gaps
-- 0-19: Poor - major omissions, unsafe practice
-
-# Important
-- Score against the CASE-SPECIFIC marking criteria when provided — these define what the trainee should have done
-- Be specific with feedback - reference what was actually said
-- Balance criticism with recognition of what was done well
-- Focus on actionable improvements
-- Keep learning points practical and memorable
-- Use the clinical learning points (if provided) to inform key takeaways
-
-# Output Format
-You MUST respond with a single JSON object matching the ConsultationFeedback schema with these exact fields:
-- data_gathering: { domain, score, strengths, improvements }
-- clinical_management: { domain, score, strengths, improvements }
-- interpersonal_skills: { domain, score, strengths, improvements }
-- overall_summary: string
-- key_learning_points: array of strings
-"""
-
-
-async def generate_feedback(
-    transcript: List[dict], case_brief: str, marking_criteria: str | None = None
-) -> ConsultationFeedback:
-    """
-    Generate structured feedback from a consultation transcript.
-    
-    Uses Gemini via google-genai for single-shot structured output generation.
-    
-    Args:
-        transcript: List of {role, content, timestamp} dicts
-        case_brief: Summary of the case for context
-        marking_criteria: Optional case-specific rubric for scoring
-    
-    Returns:
-        ConsultationFeedback with scores and learning points
-    """
-    # Return default feedback if no transcript
-    if not transcript:
-        return ConsultationFeedback(
-            data_gathering=DomainScore(
-                domain="Data Gathering",
-                score=0,
-                strengths=[],
-                improvements=["No consultation data available to assess"]
-            ),
-            clinical_management=DomainScore(
-                domain="Clinical Management",
-                score=0,
-                strengths=[],
-                improvements=["No consultation data available to assess"]
-            ),
-            interpersonal_skills=DomainScore(
-                domain="Interpersonal Skills",
-                score=0,
-                strengths=[],
-                improvements=["No consultation data available to assess"]
-            ),
-            overall_summary="No consultation transcript was captured.",
-            key_learning_points=["Ensure audio is working for next attempt"]
-        )
-    
-    # Format transcript for analysis
-    transcript_text = "\n".join([
-        f"[{t.get('timestamp', 'N/A')}] {t.get('role', 'Unknown').upper()}: {t.get('content', '')}" 
-        for t in transcript
-        if t.get('content')
-    ])
-    
-    # Build marking criteria section
-    criteria_section = ""
-    if marking_criteria:
-        criteria_section = f"\n# Case-Specific Marking Criteria\n{marking_criteria}\n"
-    
-    prompt = f"""
-{FEEDBACK_PROMPT}
-
-# Case Context
-{case_brief}
-{criteria_section}
-# Consultation Transcript
-{transcript_text}
-
-Please analyze this consultation and provide structured feedback as JSON.
-"""
-    
-    try:
-        client = genai.Client()
-        
-        response = await client.aio.models.generate_content(
-            model=settings.GEMINI_FEEDBACK_MODEL,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=ConsultationFeedback,
-                temperature=0.3,
-            ),
-        )
-        
-        return ConsultationFeedback.model_validate_json(response.text)
-        
-    except Exception as e:
-        logger.error(f"Feedback generation error: {e}")
-        # Fall back to parsing response text if structured output fails
-        try:
-            # Try parsing as raw JSON
-            if hasattr(e, '__context__') and hasattr(e.__context__, 'text'):
-                return ConsultationFeedback.model_validate_json(e.__context__.text)
-        except Exception:
-            pass
-        raise

@@ -1,8 +1,8 @@
 """
 Clinical Master Configuration
 
-Environment-based settings for LiveKit voice agent,
-feedback generation, and session management.
+Environment-based settings for LiveKit voice agent and session management.
+Feedback generation runs in a Supabase Edge Function, not this process.
 """
 
 from pathlib import Path
@@ -16,12 +16,6 @@ _ENV_FILE = Path(__file__).parent / ".env"
 
 class ClinicalMasterSettings(BaseSettings):
     """Settings loaded from environment variables."""
-
-    # --- Google AI (for feedback agent — text-only) ---
-    GOOGLE_API_KEY: str = ""
-
-    # Model for text-based feedback generation
-    GEMINI_FEEDBACK_MODEL: str = "gemini-2.5-flash"
 
     # --- Session ---
     CONSULTATION_DURATION_SECONDS: int = 480  # 8 minutes default
