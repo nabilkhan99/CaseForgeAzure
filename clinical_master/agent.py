@@ -52,9 +52,12 @@ class PatientAgent(Agent):
             stt=inference.STT("deepgram/nova-3"),
             llm=openai.LLM(
                 model="gpt-4.1-mini",
-                temperature=0.7,
+                temperature=0.3,
             ),
             tts=inference.TTS("cartesia/sonic-3"),
+            # Relaxed endpointing so users aren't cut off mid-sentence
+            min_endpointing_delay=0.8,
+            max_endpointing_delay=3.0,
         )
 
         # Session metadata — set from entrypoint before session.start
@@ -296,12 +299,18 @@ async def entrypoint(ctx: JobContext) -> None:
     agent._db_repo = db_repo
 
     # Start the voice session
-    session = AgentSession()
+    session = AgentSession(
+        min_endpointing_delay=0.8,
+        max_endpointing_delay=3.0,
+    )
 
     await session.start(
         agent=agent,
         room=ctx.room,
     )
+
+    # Brief delay for WebRTC track negotiation to complete
+    await asyncio.sleep(0.5)
 
     # Make the agent speak first — fixes the "say hello twice" issue.
     # The patient greets, which masks STT init latency and signals readiness.
