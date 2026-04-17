@@ -116,9 +116,25 @@ class PatientAgent(Agent):
             examination_type: The type of examination being requested (e.g. blood pressure, abdominal, neurological)
         """
         logger.info(f"[PatientAgent] Examination requested: {examination_type}")
+
+        # Check if the station script contains examination-relevant information
+        script = self._station_data.get("station_script", "")
+        candidate_info = self._station_data.get("candidate_instructions", "")
+        context = f"{script}\n{candidate_info}".lower()
+
+        # If the station data mentions this examination type, let the LLM use it
+        exam_lower = examination_type.lower()
+        if any(term in context for term in [exam_lower, exam_lower.replace(" ", "")]):
+            return (
+                f"The patient cooperates with the {examination_type} examination. "
+                "Use the clinical scenario details to describe realistic findings. "
+                "Respond as the patient would — describe what you feel, not clinical measurements."
+            )
+
         return (
             f"The patient cooperates with the {examination_type} examination. "
-            "Please describe what you would find based on the clinical scenario."
+            "There are no significant abnormal findings on this examination. "
+            "Respond naturally as the patient."
         )
 
     @function_tool
@@ -187,6 +203,19 @@ def _extract_transcript(
 
 
 
+
+
+# ── Startup Cleanup ─────────────────────────────────────────────
+
+def _cleanup_stale_sessions() -> None:
+    """Mark any sessions stuck in live/processing as abandoned on startup."""
+    try:
+        repo = SessionRepository()
+        repo.cleanup_stale_sessions(max_age_hours=2)
+    except Exception as e:
+        logger.warning(f"Stale session cleanup failed (non-fatal): {e}")
+
+_cleanup_stale_sessions()
 
 
 # ── LiveKit Server Setup ─────────────────────────────────────────

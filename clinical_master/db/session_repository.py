@@ -200,6 +200,14 @@ class SessionRepository:
             clinical_management = feedback.get("clinical_management", {})
             interpersonal_skills = feedback.get("interpersonal_skills", {})
             
+            # Compute overall score and pass/fail
+            overall = round(
+                (data_gathering.get("score", 0) +
+                clinical_management.get("score", 0) +
+                interpersonal_skills.get("score", 0)) / 3
+            )
+            passed = overall >= 60
+
             # Insert into session_results
             self.client.table("session_results").insert({
                 "session_id": session_id,
@@ -219,15 +227,12 @@ class SessionRepository:
                     "improvements": interpersonal_skills.get("improvements", [])
                 },
                 "overall_summary": feedback.get("overall_summary", ""),
-                "key_learning_points": feedback.get("key_learning_points", [])
+                "key_learning_points": feedback.get("key_learning_points", []),
+                "overall_score": overall,
+                "passed": passed,
             }).execute()
-            
+
             # Update session status to completed with overall score
-            overall = round(
-                (data_gathering.get("score", 0) +
-                clinical_management.get("score", 0) +
-                interpersonal_skills.get("score", 0)) / 3
-            )
             self.client.table("clinical_sessions").update({
                 "status": "completed",
                 "completed_at": datetime.now().isoformat(),
@@ -364,3 +369,33 @@ class SessionRepository:
         except Exception as e:
             logger.error(f"Error updating domain progress: {e}")
             return False
+
+    def cleanup_stale_sessions(self, max_age_hours: int = 2) -> int:
+        """
+        Mark sessions stuck in 'live' or 'processing' as 'abandoned'.
+
+        Called on agent startup to recover from container restarts.
+
+        Args:
+            max_age_hours: Sessions older than this in live/processing are stale
+
+        Returns:
+            Number of sessions cleaned up
+        """
+        try:
+            from datetime import timedelta
+            cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+
+            result = self.client.table("clinical_sessions").update({
+                "status": "abandoned"
+            }).in_("status", ["live", "processing"]).lt(
+                "started_at", cutoff
+            ).execute()
+
+            count = len(result.data) if result.data else 0
+            if count > 0:
+                logger.info(f"Cleaned up {count} stale sessions (older than {max_age_hours}h)")
+            return count
+        except Exception as e:
+            logger.error(f"Error cleaning up stale sessions: {e}")
+            return 0
