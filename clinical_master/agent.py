@@ -224,7 +224,7 @@ _cleanup_stale_sessions()
 
 # ── LiveKit Server Setup ─────────────────────────────────────────
 
-server = AgentServer()
+server = AgentServer(num_idle_processes=settings.AGENT_NUM_IDLE_PROCESSES)
 
 
 @server.rtc_session()

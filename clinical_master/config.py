@@ -40,6 +40,14 @@ class ClinicalMasterSettings(BaseSettings):
     SUPABASE_S3_SECRET_ACCESS_KEY: str = ""
     RECORDING_BUCKET: str = "consultation-recordings"
 
+    # --- Agent runtime ---
+    # Number of prewarmed ("warm") job processes the worker keeps ready. Each holds
+    # ~150-200MB, so this MUST be sized to the instance RAM. LiveKit's default is
+    # ceil(cpu_count()), which over-provisions in containers (cpu_count reports the
+    # host's cores, not the container limit) and OOMs. Default 1 is safe on a small
+    # box; set higher (e.g. 4 on a 4GB instance) for warm concurrency.
+    AGENT_NUM_IDLE_PROCESSES: int = 1
+
     class Config:
         env_file = str(_ENV_FILE)
         env_file_encoding = "utf-8"
