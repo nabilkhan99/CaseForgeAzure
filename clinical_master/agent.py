@@ -28,7 +28,7 @@ from livekit.plugins import openai
 from ai_agents.patient import build_patient_prompt
 from config import settings
 from db.session_repository import SessionRepository
-from recording import start_session_recording
+from recording import start_session_recording, stop_session_recording
 
 load_dotenv()
 
@@ -311,14 +311,24 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     # Best-effort full-consultation audio recording (internal use only).
-    # Runs server-side via LiveKit Egress → Supabase Storage and auto-finalises
-    # when the room empties. Never allowed to break the consultation.
+    # Runs server-side via LiveKit Egress → Supabase Storage. Never allowed to
+    # break the consultation.
     if settings.RECORDING_ENABLED and db_session_id:
         try:
             recording_result = await start_session_recording(ctx.room.name, db_session_id)
             if recording_result and db_repo:
                 rec_path, rec_egress_id = recording_result
                 db_repo.save_recording_path(db_session_id, rec_path, rec_egress_id)
+
+                # Room Composite Egress does NOT reliably auto-stop: the room can
+                # linger after the consultation (empty_timeout / lingering
+                # participants), so the egress would keep running (billing) and
+                # never finalise the upload. Stop it explicitly on job shutdown —
+                # this is what actually writes the .ogg to Supabase.
+                async def _stop_recording() -> None:
+                    await stop_session_recording(rec_egress_id)
+
+                ctx.add_shutdown_callback(_stop_recording)
         except Exception as e:
             logger.warning(f"Recording setup failed (non-fatal): {e}")
 

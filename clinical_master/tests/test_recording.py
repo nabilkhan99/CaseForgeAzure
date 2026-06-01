@@ -93,3 +93,40 @@ def test_returns_none_on_api_error(configured):
 
     assert result is None
     fake.aclose.assert_awaited_once()
+
+
+def test_stop_session_recording_stops_egress():
+    """stop_session_recording issues a StopEgress for the given egress id."""
+    fake = mock.Mock()
+    fake.egress.stop_egress = mock.AsyncMock()
+    fake.aclose = mock.AsyncMock()
+
+    with mock.patch.object(recording.api, "LiveKitAPI", return_value=fake):
+        ok = asyncio.run(recording.stop_session_recording("EG_123"))
+
+    assert ok is True
+    req = fake.egress.stop_egress.call_args.args[0]
+    assert req.egress_id == "EG_123"
+    fake.aclose.assert_awaited_once()
+
+
+def test_stop_session_recording_empty_id_is_noop():
+    """An empty egress id never calls the API."""
+    with mock.patch.object(recording.api, "LiveKitAPI") as lkapi:
+        ok = asyncio.run(recording.stop_session_recording(""))
+
+    assert ok is False
+    lkapi.assert_not_called()
+
+
+def test_stop_session_recording_swallows_errors():
+    """A stop failure is swallowed (returns False) and the client is closed."""
+    fake = mock.Mock()
+    fake.egress.stop_egress = mock.AsyncMock(side_effect=RuntimeError("boom"))
+    fake.aclose = mock.AsyncMock()
+
+    with mock.patch.object(recording.api, "LiveKitAPI", return_value=fake):
+        ok = asyncio.run(recording.stop_session_recording("EG_123"))
+
+    assert ok is False
+    fake.aclose.assert_awaited_once()

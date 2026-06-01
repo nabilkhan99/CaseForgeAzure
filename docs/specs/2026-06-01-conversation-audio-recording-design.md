@@ -49,8 +49,15 @@ session.start()  →  agent calls start_session_recording()
                          └─ save_recording_path(session_id, path, egress_id)
 
 LiveKit Cloud Egress records both voices (mixed) → uploads .ogg to Supabase Storage
-Room empties on session close → egress auto-stops & finalizes the file (no explicit stop)
+Agent job shutdown → ctx.add_shutdown_callback → stop_session_recording(egress_id)
+  → egress finalizes & uploads the .ogg
 ```
+
+> **Correction (was wrong in v1):** we originally assumed room-composite egress
+> would auto-stop "when the room empties." In practice the LiveKit room lingers
+> after the consultation (empty_timeout 300s + lingering participants), so the
+> egress ran indefinitely and never finalized the upload. The egress is now
+> stopped **explicitly** via a job shutdown callback. See "Root cause" below.
 
 ## Components (files)
 
@@ -109,8 +116,9 @@ Supabase's S3 gateway). `LiveKitAPI()` reuses existing `LIVEKIT_URL/API_KEY/API_
 - **Feature flag:** `RECORDING_ENABLED=false` short-circuits before any API call.
 - **Unconfigured skip:** even with the flag on, missing S3 settings cause a logged
   skip (no API call) — see `_recording_configured()`.
-- **Auto-stop:** room-composite egress finalizes when the room empties — no explicit
-  stop in `on_close`. `egress_id` retained only as an escape hatch.
+- **Explicit stop:** the egress is stopped via `ctx.add_shutdown_callback` when the
+  agent job shuts down (it writes the `.ogg` only on stop). We do **not** rely on
+  room auto-close — see the correction above.
 - **File-ready latency:** the `.ogg` lands in the bucket a few seconds after session
   end. No webhook handler now; `egress_ended` webhook is a future add if duration/size
   metadata or a "ready" flag is wanted.
@@ -121,6 +129,22 @@ Supabase's S3 gateway). `LiveKitAPI()` reuses existing `LIVEKIT_URL/API_KEY/API_
   (`audio_only=True`, OGG, correct filepath/bucket/endpoint); exceptions yield `None`.
 - `save_recording_path` writes the right columns (mocked Supabase client).
 - Follows existing pytest patterns in `clinical_master/tests/`.
+
+## Root cause of initial "empty bucket" (debugged 2026-06-01)
+
+Two separate issues, found in order:
+
+1. **Duplicate agent worker.** A stale Azure Container App was still registered to
+   the LiveKit project alongside the Render worker. LiveKit load-balanced
+   consultations across both; sessions landing on the Azure worker ran pre-recording
+   code with no S3 env vars → `recording_path` NULL and no logs in Render. Fixed by
+   stopping the Azure Container App and deleting `deploy-clinical-master.yml` so it
+   isn't re-deployed. Render is now the sole runtime.
+2. **Egress never finalized.** Once sessions reliably hit Render, egress *started*
+   correctly but the room lingered (empty_timeout 300s + 3 participants), so the
+   egress kept running and never uploaded. Fixed by stopping the egress explicitly
+   on job shutdown (above). Verified: a manually-stopped egress uploaded a 4.9 MB
+   `.ogg` to the bucket, confirming S3 creds/region/endpoint are correct.
 
 ## Out of scope (future)
 

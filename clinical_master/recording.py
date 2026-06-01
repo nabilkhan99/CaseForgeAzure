@@ -91,3 +91,35 @@ async def start_session_recording(
     finally:
         if lkapi is not None:
             await lkapi.aclose()
+
+
+async def stop_session_recording(egress_id: str) -> bool:
+    """Stop an active egress so the recording finalises and uploads.
+
+    Room Composite Egress only writes the file to storage when it *ends*, and it
+    does not reliably auto-stop when a consultation finishes — the LiveKit room
+    can linger (empty-timeout / lingering participants), leaving the egress
+    running indefinitely (billing the whole time) and never uploading. So we stop
+    it explicitly when the agent job shuts down.
+
+    Args:
+        egress_id: The egress to stop (from ``start_session_recording``).
+
+    Returns:
+        True if the stop request was sent, False otherwise. Never raises.
+    """
+    if not egress_id:
+        return False
+
+    lkapi: api.LiveKitAPI | None = None
+    try:
+        lkapi = api.LiveKitAPI()
+        await lkapi.egress.stop_egress(api.StopEgressRequest(egress_id=egress_id))
+        logger.info("Stopped egress %s", egress_id)
+        return True
+    except Exception as e:  # best-effort: never propagate
+        logger.error("Failed to stop egress %s: %s: %s", egress_id, type(e).__name__, e)
+        return False
+    finally:
+        if lkapi is not None:
+            await lkapi.aclose()
