@@ -29,6 +29,17 @@ class ClinicalMasterSettings(BaseSettings):
     # LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
     # These don't need to be in this settings class — the SDK reads them directly.
 
+    # --- Recording (Egress → Supabase Storage) ---
+    # Full consultation audio is recorded server-side via LiveKit Room Composite
+    # Egress and uploaded to a private Supabase Storage bucket (S3 gateway).
+    # Internal use only. Recording is best-effort and never blocks a consultation.
+    RECORDING_ENABLED: bool = True
+    SUPABASE_S3_ENDPOINT: str = ""        # https://<ref>.storage.supabase.co/storage/v1/s3
+    SUPABASE_S3_REGION: str = ""          # Supabase → Storage → S3 Configuration
+    SUPABASE_S3_ACCESS_KEY_ID: str = ""   # Supabase Storage S3 key (separate from service role)
+    SUPABASE_S3_SECRET_ACCESS_KEY: str = ""
+    RECORDING_BUCKET: str = "consultation-recordings"
+
     class Config:
         env_file = str(_ENV_FILE)
         env_file_encoding = "utf-8"

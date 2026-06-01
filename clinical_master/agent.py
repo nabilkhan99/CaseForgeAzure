@@ -28,6 +28,7 @@ from livekit.plugins import openai
 from ai_agents.patient import build_patient_prompt
 from config import settings
 from db.session_repository import SessionRepository
+from recording import start_session_recording
 
 load_dotenv()
 
@@ -309,29 +310,39 @@ async def entrypoint(ctx: JobContext) -> None:
         room=ctx.room,
     )
 
+    # Best-effort full-consultation audio recording (internal use only).
+    # Runs server-side via LiveKit Egress → Supabase Storage and auto-finalises
+    # when the room empties. Never allowed to break the consultation.
+    if settings.RECORDING_ENABLED and db_session_id:
+        try:
+            recording_result = await start_session_recording(ctx.room.name, db_session_id)
+            if recording_result and db_repo:
+                rec_path, rec_egress_id = recording_result
+                db_repo.save_recording_path(db_session_id, rec_path, rec_egress_id)
+        except Exception as e:
+            logger.warning(f"Recording setup failed (non-fatal): {e}")
+
     # Brief delay for WebRTC track negotiation to complete
     await asyncio.sleep(0.5)
 
-    # Make the agent speak first — fixes the "say hello twice" issue.
-    # The patient greets, which masks STT init latency and signals readiness.
-    opening = agent._station_data.get("station_script", "")
-    if "Opening Sentence:" in opening:
-        # Station has a defined opening — let the LLM paraphrase it
-        await session.generate_reply(
-            instructions="The doctor has just entered the room and greeted you. "
-            "Deliver your opening line naturally — paraphrase it, don't recite it word-for-word. "
-            "Keep it to 1-2 sentences maximum. "
-            "IMPORTANT: Output ONLY spoken words. No stage directions, no parenthetical actions, "
-            "no asterisks, no physical descriptions. Just what you would SAY out loud."
+    # The patient speaks first, but with a GREETING ONLY. Speaking first masks
+    # STT init latency and signals readiness (avoiding the awkward "say hello
+    # twice" / dead-air problem) — but the patient must NOT reveal why they're
+    # here yet. The doctor opens the consultation; the patient discloses the
+    # presenting complaint on a later turn, once asked. That follow-up is
+    # governed by the system prompt (build_patient_prompt → "Opening — TWO steps").
+    await session.generate_reply(
+        instructions=(
+            "The consultation is just beginning and you are the first to speak. "
+            "Say a short, natural greeting ONLY — for example \"Hello\" or \"Hi, doctor\". "
+            "Do NOT say why you are here, do NOT mention any symptom, problem, or reason for "
+            "your visit, and do NOT ask any questions. After greeting, wait for the doctor to "
+            "respond and ask what they can help you with. "
+            "Keep it to a few words. "
+            "Output ONLY the words you would say out loud — no stage directions, no parenthetical "
+            "actions, no asterisks, no physical descriptions."
         )
-    else:
-        # No specific opening — generic patient greeting
-        await session.generate_reply(
-            instructions="The doctor has just entered the room. "
-            "Greet them briefly and state why you're here in 1-2 sentences. "
-            "Be natural and conversational. "
-            "IMPORTANT: Output ONLY spoken words. No stage directions, no actions, no asterisks."
-        )
+    )
 
     # Register close handler — save transcript and set status to "processing".
     # Feedback generation is handled by the frontend API route (agent process

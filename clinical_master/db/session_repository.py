@@ -173,7 +173,30 @@ class SessionRepository:
         except Exception as e:
             logger.error(f"Error saving transcript: {e}")
             return False
-    
+
+    def save_recording_path(self, session_id: str, path: str, egress_id: str) -> bool:
+        """
+        Save the audio recording's storage path and egress ID.
+
+        Args:
+            session_id: UUID of the session
+            path: Storage object key of the recording (e.g. recordings/<session_id>.ogg)
+            egress_id: LiveKit egress ID that produced the recording
+
+        Returns:
+            True if successful
+        """
+        try:
+            self.client.table("clinical_sessions").update({
+                "recording_path": path,
+                "recording_egress_id": egress_id,
+            }).eq("id", session_id).execute()
+            logger.info(f"Saved recording path for session {session_id}: {path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving recording path: {e}")
+            return False
+
     def save_feedback(self, session_id: str, feedback: dict) -> bool:
         """
         Save session feedback/results.
