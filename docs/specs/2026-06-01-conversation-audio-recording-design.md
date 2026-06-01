@@ -49,15 +49,17 @@ session.start()  →  agent calls start_session_recording()
                          └─ save_recording_path(session_id, path, egress_id)
 
 LiveKit Cloud Egress records both voices (mixed) → uploads .ogg to Supabase Storage
-Agent job shutdown → ctx.add_shutdown_callback → stop_session_recording(egress_id)
-  → egress finalizes & uploads the .ogg
+Consultation ends (hang-up / end_consultation tool / timer) → session "close" event
+  → on_close → stop_session_recording(egress_id) → egress finalizes & uploads .ogg
+  (a job shutdown callback is registered only as a backstop)
 ```
 
-> **Correction (was wrong in v1):** we originally assumed room-composite egress
-> would auto-stop "when the room empties." In practice the LiveKit room lingers
-> after the consultation (empty_timeout 300s + lingering participants), so the
-> egress ran indefinitely and never finalized the upload. The egress is now
-> stopped **explicitly** via a job shutdown callback. See "Root cause" below.
+> **Correction (was wrong in v1 and v2):** v1 assumed egress auto-stops when the
+> room empties (it doesn't — the room lingers ~300s with participants). v2 stopped
+> it via a job shutdown callback — also too late: shutdown callbacks fire only
+> *after* the job shuts down, which itself waits for the room to close
+> (`job_proc_lazy_main.py`). v3 stops the egress in the session `on_close` handler,
+> which fires promptly on consultation end. See "Root cause" below.
 
 ## Components (files)
 
@@ -116,9 +118,10 @@ Supabase's S3 gateway). `LiveKitAPI()` reuses existing `LIVEKIT_URL/API_KEY/API_
 - **Feature flag:** `RECORDING_ENABLED=false` short-circuits before any API call.
 - **Unconfigured skip:** even with the flag on, missing S3 settings cause a logged
   skip (no API call) — see `_recording_configured()`.
-- **Explicit stop:** the egress is stopped via `ctx.add_shutdown_callback` when the
-  agent job shuts down (it writes the `.ogg` only on stop). We do **not** rely on
-  room auto-close — see the correction above.
+- **Explicit stop:** the egress is stopped in the session `on_close` handler — it
+  fires promptly on hang-up / end-tool / timer (the same point the transcript saves
+  and feedback is triggered), and stopping is what writes the `.ogg`. A job shutdown
+  callback is kept only as a backstop (it fires too late on its own — see above).
 - **File-ready latency:** the `.ogg` lands in the bucket a few seconds after session
   end. No webhook handler now; `egress_ended` webhook is a future add if duration/size
   metadata or a "ready" flag is wanted.
@@ -140,11 +143,15 @@ Two separate issues, found in order:
    code with no S3 env vars → `recording_path` NULL and no logs in Render. Fixed by
    stopping the Azure Container App and deleting `deploy-clinical-master.yml` so it
    isn't re-deployed. Render is now the sole runtime.
-2. **Egress never finalized.** Once sessions reliably hit Render, egress *started*
-   correctly but the room lingered (empty_timeout 300s + 3 participants), so the
-   egress kept running and never uploaded. Fixed by stopping the egress explicitly
-   on job shutdown (above). Verified: a manually-stopped egress uploaded a 4.9 MB
-   `.ogg` to the bucket, confirming S3 creds/region/endpoint are correct.
+2. **Egress never finalized.** Egress *started* correctly but the room lingered
+   (empty_timeout 300s + participants), so it never stopped → never uploaded. The
+   first fix (stop via `ctx.add_shutdown_callback`) was insufficient: shutdown
+   callbacks run only *after* the job shuts down, which itself waits for the room
+   to close (`job_proc_lazy_main.py`) — too late. Final fix: stop the egress in the
+   session `on_close` handler, which fires promptly on consultation end (hang-up /
+   end-tool / timer), the same point the transcript saves. The shutdown callback
+   remains as a backstop. Verified manually: a stopped egress uploads the `.ogg`
+   (8.25 MB on the last test), confirming S3 creds/region/endpoint are correct.
 
 ## Out of scope (future)
 

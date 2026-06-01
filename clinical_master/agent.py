@@ -310,23 +310,23 @@ async def entrypoint(ctx: JobContext) -> None:
         room=ctx.room,
     )
 
-    # Best-effort full-consultation audio recording (internal use only).
-    # Runs server-side via LiveKit Egress → Supabase Storage. Never allowed to
-    # break the consultation.
+    # Best-effort full-consultation audio recording (internal use only). Runs
+    # server-side via LiveKit Egress → Supabase Storage; never allowed to break
+    # the consultation. The egress only writes the .ogg when it STOPS, and it does
+    # NOT auto-stop (the room lingers after the consultation). We stop it the
+    # moment the session closes — see on_close — which fires promptly on session
+    # end. The shutdown callback below is only a backstop: it fires on job
+    # shutdown, which waits for the room to close and can be heavily delayed.
+    recording_egress_id: str | None = None
     if settings.RECORDING_ENABLED and db_session_id:
         try:
             recording_result = await start_session_recording(ctx.room.name, db_session_id)
             if recording_result and db_repo:
-                rec_path, rec_egress_id = recording_result
-                db_repo.save_recording_path(db_session_id, rec_path, rec_egress_id)
+                rec_path, recording_egress_id = recording_result
+                db_repo.save_recording_path(db_session_id, rec_path, recording_egress_id)
 
-                # Room Composite Egress does NOT reliably auto-stop: the room can
-                # linger after the consultation (empty_timeout / lingering
-                # participants), so the egress would keep running (billing) and
-                # never finalise the upload. Stop it explicitly on job shutdown —
-                # this is what actually writes the .ogg to Supabase.
                 async def _stop_recording() -> None:
-                    await stop_session_recording(rec_egress_id)
+                    await stop_session_recording(recording_egress_id)
 
                 ctx.add_shutdown_callback(_stop_recording)
         except Exception as e:
@@ -360,6 +360,14 @@ async def entrypoint(ctx: JobContext) -> None:
     @session.on("close")
     def on_close(ev: CloseEvent) -> None:
         logger.info(f"Session closed, reason: {ev.reason}")
+
+        # Stop the recording the instant the consultation ends — this same event
+        # fires on hang-up, the end_consultation tool, and the timer, and is where
+        # the transcript is saved and feedback is triggered. Stopping the egress
+        # here finalises and uploads the .ogg (it's fire-and-forget; the job stays
+        # alive while the room lingers, so the task completes).
+        if recording_egress_id:
+            asyncio.create_task(stop_session_recording(recording_egress_id))
 
         transcript = _extract_transcript(session, agent._message_timestamps)
         logger.info(f"Extracted {len(transcript)} transcript entries")
