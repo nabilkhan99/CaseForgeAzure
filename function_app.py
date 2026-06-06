@@ -5,6 +5,7 @@ from functions.improve_review import main as improve_review_main
 from functions.improve_section import main as improve_section_main
 from functions.select_capabilities import main as select_capabilities_main
 from functions.select_experience_groups import main as select_experience_groups_main
+from functions.mark_consultation import main as mark_consultation_main
 import logging
 app = func.FunctionApp()
 
@@ -37,4 +38,9 @@ async def select_capabilities(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="select-experience-groups", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
 async def select_experience_groups(req: func.HttpRequest) -> func.HttpResponse:
     return await select_experience_groups_main(req)
+
+@app.function_name(name="mark-consultation")
+@app.route(route="mark-consultation", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+async def mark_consultation(req: func.HttpRequest) -> func.HttpResponse:
+    return await mark_consultation_main(req)
 

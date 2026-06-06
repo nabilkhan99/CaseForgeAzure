@@ -139,6 +139,9 @@ class MarkingService:
         fb.overall.tier3_override_applied = verdict["tier3_override_applied"]
 
         payload = enforce_no_dashes(fb.model_dump())
+        # Persist which conditional features were in play, for the trend layer and audit
+        # (Build Package action item 11). Not part of the candidate-facing schema.
+        payload["conditional_features"] = case_pack.get("conditional_features")
         self.repo.save_results(session_id, payload)
         self.repo.mark_completed(session_id, int(round(verdict["weighted_score"])))
         return payload

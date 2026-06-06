@@ -21,7 +21,16 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str = "https://ai-caseforge2025a060083517978.openai.azure.com"
     azure_openai_api_version: str = "2025-01-01-preview"
     azure_openai_deployment: str = "gpt-4.1-mini"
-    
+    # Stronger deployment used for SCA marking and trend (Build Package: use a strong model)
+    azure_openai_marking_deployment: str = "gpt-4.1"
+
+    # Supabase (service role) for the SCA marking + trend pipeline
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+
+    # Shared secret guarding the marking/trend endpoints (frontend -> Azure)
+    marking_shared_secret: str = ""
+
     # Application Settings
     debug: bool = False
     environment: str = "development"
