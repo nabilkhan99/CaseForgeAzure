@@ -21,8 +21,13 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str = "https://ai-caseforge2025a060083517978.openai.azure.com"
     azure_openai_api_version: str = "2025-01-01-preview"
     azure_openai_deployment: str = "gpt-4.1-mini"
-    # Stronger deployment used for SCA marking and trend (Build Package: use a strong model)
-    azure_openai_marking_deployment: str = "gpt-4.1"
+    # Deployment used for SCA marking and trend. Set to the exact Azure Foundry
+    # deployment name (e.g. "gpt-5.4-mini"). Build Package advises a strong model
+    # for marking; a mini model must be validated against the Phase 9 golden cases.
+    azure_openai_marking_deployment: str = "gpt-5.4-mini"
+    # Optional newer api-version for the marking deployment (GPT-5 family may need
+    # a later preview); falls back to azure_openai_api_version when empty.
+    azure_openai_marking_api_version: str = ""
 
     # Supabase (service role) for the SCA marking + trend pipeline
     supabase_url: str = ""

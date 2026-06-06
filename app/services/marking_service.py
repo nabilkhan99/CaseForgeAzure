@@ -60,16 +60,35 @@ def build_case_pack(station: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def make_azure_model_call(client: Any, deployment: str) -> ModelCall:
-    """Build an async model_call bound to an AsyncAzureOpenAI client and deployment."""
+def model_supports_temperature(deployment: str) -> bool:
+    """GPT-5 family and o-series reasoning models only accept the default temperature."""
+    name = (deployment or "").lower()
+    if name.startswith(("o1", "o3", "o4")):
+        return False
+    if "gpt-5" in name:
+        return False
+    return True
+
+
+def make_azure_model_call(
+    client: Any, deployment: str, temperature: Optional[float] = 0.2
+) -> ModelCall:
+    """Build an async model_call bound to an AsyncAzureOpenAI client and deployment.
+
+    `temperature` is included only when not None, so the same factory works for
+    classic models (gpt-4.1) and reasoning models (gpt-5.x, o-series) that reject
+    a custom temperature.
+    """
 
     async def _call(messages: List[Dict[str, str]]) -> str:
-        resp = await client.chat.completions.create(
-            model=deployment,
-            messages=messages,
-            temperature=0.2,
-            response_format={"type": "json_object"},
-        )
+        kwargs: Dict[str, Any] = {
+            "model": deployment,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        resp = await client.chat.completions.create(**kwargs)
         return resp.choices[0].message.content or ""
 
     return _call

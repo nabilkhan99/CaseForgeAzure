@@ -11,7 +11,11 @@ from openai import AsyncAzureOpenAI
 
 from app.config import Settings
 from app.middleware import cors_middleware, handle_response
-from app.services.marking_service import MarkingService, make_azure_model_call
+from app.services.marking_service import (
+    MarkingService,
+    make_azure_model_call,
+    model_supports_temperature,
+)
 from app.services.supabase_client import SessionRepository, get_client
 
 
@@ -34,15 +38,18 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         if not session_id:
             return handle_response(error="sessionId is required", status_code=400)
 
+        deployment = settings.azure_openai_marking_deployment
+        api_version = settings.azure_openai_marking_api_version or settings.azure_openai_api_version
         openai_client = AsyncAzureOpenAI(
             azure_endpoint=settings.azure_openai_endpoint,
             api_key=settings.azure_openai_api_key,
-            api_version=settings.azure_openai_api_version,
+            api_version=api_version,
         )
+        temperature = 0.2 if model_supports_temperature(deployment) else None
         repo = SessionRepository(get_client(settings))
         service = MarkingService(
             repo,
-            make_azure_model_call(openai_client, settings.azure_openai_marking_deployment),
+            make_azure_model_call(openai_client, deployment, temperature=temperature),
         )
 
         result = await service.mark(session_id)
