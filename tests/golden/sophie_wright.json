@@ -1,0 +1,197 @@
+{
+  "station": {
+    "id": "contraception_sophie_wright",
+    "title": "Contraception, learning disability, enzyme-inducing AED",
+    "patient_name": "Sophie Wright",
+    "patient_age": 20,
+    "consultation_type": "face-to-face",
+    "candidate_instructions": "Sophie Wright, 20, mild to moderate learning disability. Epilepsy controlled on Carbamazepine 200mg BD. Attends alone requesting the pill.",
+    "station_script": "You are Sophie Wright, 20, with a mild learning disability. You want to go on the pill because you have a boyfriend, Liam (21). You do not want a baby. You take two little white epilepsy tablets a day that your mum puts out; you sometimes forget the evening one. You and Liam have not had sex yet. You do not want your mum told.",
+    "data_gathering": "Open agenda setting; sensitive coercion and safeguarding screen; ICE; adherence difficulty; explore epilepsy and medication; sexual and menstrual history; capacity assessed conversationally.",
+    "clinical_management": "Recognise Carbamazepine is an enzyme inducer making the COCP and standard POP unreliable; steer to a long acting method unaffected by enzyme induction (injection or intrauterine); offer accessible written information; specific follow up; handle confidentiality.",
+    "relating_to_others": "Clear, age respecting language; reassure confidentiality for a capacitous adult; check understanding (teach back); offer accessible information; acknowledge relationship pressure.",
+    "clinical_learning_points": "Carbamazepine is a strong enzyme inducer: the combined pill and the standard progestogen only pill are unreliable. The implant is also reduced by enzyme inducers and is not first line. Methods unaffected by induction: the injection (DMPA) and intrauterine methods (copper IUD or the levonorgestrel IUS). Capacity for the specific decision should be assessed conversationally, not as a formal test; that would be disempowering. Adults with a learning disability are at higher risk of exploitation, so a coercion screen is essential. Offer Easy Read information as a reasonable adjustment.",
+    "mark_scheme_structured": null,
+    "case_type": "patient_direct",
+    "conditional_features": {
+      "safeguarding": true,
+      "consent_capacity": true,
+      "complexity": true,
+      "third_party": false
+    }
+  },
+  "session": {
+    "id": "golden_wright",
+    "user_id": "golden_cand",
+    "station_id": "contraception_sophie_wright",
+    "status": "processing",
+    "transcript": [
+      {
+        "speaker": "candidate",
+        "start_ms": 10000,
+        "text": "Hello, I am Dr Okafor, one of the GPs. Can I check I am speaking with Sophie Wright, and your date of birth?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 20000,
+        "text": "Yes that is me. I came by myself today. I want to go on the pill. My friend Sarah is on it and she said I need it now because I have a boyfriend.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 45000,
+        "text": "Thank you for coming in to talk about it. Tell me a bit about what is going on.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 65000,
+        "text": "I have got a boyfriend now, Liam, and we want to, you know, do more soon. I do not want a baby.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 90000,
+        "text": "Tell me about Liam, how did you two meet?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 98000,
+        "text": "At college. He is 21. He is really nice, he buys me chips.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 120000,
+        "text": "Has he ever made you do anything you did not want to?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 128000,
+        "text": "No, nothing like that. We just kiss right now. We talked about doing more, we both want to.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 160000,
+        "text": "What is it about the pill that you were hoping for?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 175000,
+        "text": "I definitely do not want a baby. My sister just had one and she looks so tired all the time. The pill stops babies, right?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 210000,
+        "text": "It can do. Can I ask about your epilepsy, how is that at the moment?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 220000,
+        "text": "Good. I have not had a fit for ages, more than a year. Mum says so.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 235000,
+        "text": "And the tablets for it?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 242000,
+        "text": "Two a day, one breakfast one dinner. Mum puts them out for me. Little white ones, I do not know the name.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 270000,
+        "text": "If you had a pill to take every day yourself, do you think you could remember it?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 280000,
+        "text": "I do not know. If Mum is not there I forget the dinner one sometimes. Sometimes I forget to brush my teeth.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 330000,
+        "text": "Have you and Liam had sex yet?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 338000,
+        "text": "No, not yet. Just kissing. But we want to soon.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 370000,
+        "text": "Do your periods come regularly?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 378000,
+        "text": "Yeah, every month, about four or five days, not too heavy.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 420000,
+        "text": "I think the best thing is the combined pill. I will start you on that today.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 435000,
+        "text": "Okay, thank you. I will take it when I remember.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 480000,
+        "text": "It is very safe. Use condoms too if you can.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 510000,
+        "text": "Does Mum need to know? Please do not tell her, she thinks I am still a little girl.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 520000,
+        "text": "It is confidential, I will not tell her. Come back if you have any problems.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 630000,
+        "text": "Okay. Thank you Doctor.",
+        "asr_confidence": 1.0
+      }
+    ]
+  },
+  "expected": {
+    "verdict": "Bare Fail",
+    "weighted_score": 5.5,
+    "grades": {
+      "data_gathering": "P",
+      "clinical_management": "F",
+      "relating_to_others": "P"
+    },
+    "tier3_override_applied": false
+  }
+}

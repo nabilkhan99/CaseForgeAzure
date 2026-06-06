@@ -1,0 +1,167 @@
+{
+  "station": {
+    "id": "uti_fgm_faduma_hassan",
+    "title": "Telephone UTI that is a child safeguarding emergency",
+    "patient_name": "Faduma Hassan",
+    "patient_age": 32,
+    "consultation_type": "telephone",
+    "candidate_instructions": "Faduma Hassan, 32, telephone consultation, booked for a recurrent UTI. She has Type 3 FGM documented in pregnancy.",
+    "station_script": "You are Faduma Hassan, 32, calling about burning when you pass urine (a recurrent UTI). But the real reason you called is your 6 year old daughter Aisha: your mother in law is arriving from Somalia within weeks and plans to have Aisha cut (FGM), possibly by taking her abroad. Aisha has not been harmed yet. You are frightened your husband could be arrested or your child taken. You ask whether a letter from the doctor would help.",
+    "data_gathering": "Adequate UTI history including upper tract red flags and recurrence; follow the daughter cue; establish imminence, abroad risk, and that the child is currently unharmed; recognise the mother's own FGM as the likely cause of recurrent UTIs.",
+    "clinical_management": "Appropriate empirical antibiotic and a urine culture for recurrent infection. The central action: a child at risk of FGM is a child protection matter needing an URGENT same day referral to Children's Social Care (MASH), and an FGM Protection Order can prevent travel. Calling 101 (the mandatory reporting duty) is for FGM that has ALREADY happened and is the wrong pathway here. A GP letter has no protective force and must be redirected. Safety net for escalation (999, NSPCC FGM helpline).",
+    "relating_to_others": "Empathy for the disclosure; anticipate and address the fear of police and of the child being removed; explain the supportive purpose of safeguarding; check understanding.",
+    "clinical_learning_points": "The mandatory reporting duty (report to police, 101) applies only when FGM has already been carried out on a girl under 18. A child AT RISK of FGM is a child protection matter: refer urgently to Children's Social Care (MASH) the same day. An FGM Protection Order can require passport surrender and prevent the child being taken abroad. A GP letter carries no legal force to prevent FGM or travel. Failing to make the urgent social care referral for a named child at imminent, time critical risk is a dangerous (Tier 3) omission.",
+    "mark_scheme_structured": null,
+    "case_type": "patient_direct",
+    "conditional_features": {
+      "safeguarding": true,
+      "consent_capacity": false,
+      "complexity": false,
+      "third_party": false
+    }
+  },
+  "session": {
+    "id": "golden_faduma",
+    "user_id": "golden_cand",
+    "station_id": "uti_fgm_faduma_hassan",
+    "status": "processing",
+    "transcript": [
+      {
+        "speaker": "patient",
+        "start_ms": 15000,
+        "text": "Hello Doctor. I need some antibiotics again, it is burning when I pee and it takes a long time to come out. But I am also so stressed, I have not been sleeping, I have a terrible problem at home and I do not know who to talk to.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 40000,
+        "text": "I am sorry to hear that. Let us sort the urine infection first. How long has the burning been going on?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 50000,
+        "text": "Three days. It stings a lot and I have to push to empty.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 90000,
+        "text": "Any fever, or pain in your back or sides?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 98000,
+        "text": "No, no temperature, no back pain. Just the burning at the front.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 130000,
+        "text": "Any blood in the urine, or discharge?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 138000,
+        "text": "No, nothing like that.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 170000,
+        "text": "You have had these before, is that right?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 180000,
+        "text": "Yes, a few times over the years. The antibiotics clear it but it comes back.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 220000,
+        "text": "That sounds like another water infection. I will prescribe nitrofurantoin, three days.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 240000,
+        "text": "Thank you. But Doctor, please, the infection is nothing. Did you hear what I said about my daughter? They are going to cut her.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 260000,
+        "text": "What do you mean, cut her?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 270000,
+        "text": "My mother in law is coming from Somalia in a few weeks. She says Aisha is 6 now and it is time for her to be purified. To be cut. Like was done to me. I do not want it.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 310000,
+        "text": "That must be very frightening. Has Aisha been harmed at all yet?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 318000,
+        "text": "No, not yet. But they are making plans. She might even take her to Somalia for a holiday to do it.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 360000,
+        "text": "I understand. This is clearly causing you a lot of distress and I want to help. The most important thing I can do is report this so it goes on record. I will call the police on 101 today to report it.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 400000,
+        "text": "The police? Will my husband be arrested? Will they take my baby?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 420000,
+        "text": "They are there to help. I would also suggest you talk to your husband about how dangerous it is. Would a letter from me help, saying it is medically harmful?",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 450000,
+        "text": "Yes, maybe a letter. Please.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "candidate",
+        "start_ms": 465000,
+        "text": "I will write you a letter you can show him. And I will report it to the police. Take the antibiotics for the infection, and come back if the burning gets worse.",
+        "asr_confidence": 1.0
+      },
+      {
+        "speaker": "patient",
+        "start_ms": 540000,
+        "text": "Okay. Thank you Doctor.",
+        "asr_confidence": 1.0
+      }
+    ]
+  },
+  "expected": {
+    "verdict": "Fail",
+    "weighted_score": 3.0,
+    "grades": {
+      "data_gathering": "P",
+      "clinical_management": "CF",
+      "relating_to_others": "F"
+    },
+    "tier3_override_applied": true
+  }
+}
