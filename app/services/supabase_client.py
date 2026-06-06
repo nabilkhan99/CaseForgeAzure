@@ -79,7 +79,22 @@ class SessionRepository:
             "id", session_id
         ).execute()
 
-    # ── trend layer reads (Phase 8) ──
+    # ── trend layer (Phase 8) ──
+    def save_trend(self, candidate_id: str, payload: Dict[str, Any]) -> None:
+        row = {
+            "candidate_id": candidate_id,
+            "window": payload.get("window"),
+            "confidence": payload.get("confidence"),
+            "overall_trajectory": payload.get("overall_trajectory"),
+            "overall_narrative": payload.get("overall_narrative"),
+            "recurring_themes": payload.get("recurring_themes"),
+            "style_patterns": payload.get("style_patterns"),
+            "consistent_strengths": payload.get("consistent_strengths"),
+            "next_steps": payload.get("next_steps"),
+            "caution": payload.get("caution"),
+        }
+        self.client.table("trend_reports").insert(row).execute()
+
     def get_candidate_results(self, candidate_id: str) -> List[Dict[str, Any]]:
         """Persisted single-case results for a candidate, oldest first."""
         res = (

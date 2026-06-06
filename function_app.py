@@ -6,6 +6,7 @@ from functions.improve_section import main as improve_section_main
 from functions.select_capabilities import main as select_capabilities_main
 from functions.select_experience_groups import main as select_experience_groups_main
 from functions.mark_consultation import main as mark_consultation_main
+from functions.generate_trend import main as generate_trend_main
 import logging
 app = func.FunctionApp()
 
@@ -43,4 +44,9 @@ async def select_experience_groups(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="mark-consultation", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
 async def mark_consultation(req: func.HttpRequest) -> func.HttpResponse:
     return await mark_consultation_main(req)
+
+@app.function_name(name="generate-trend")
+@app.route(route="generate-trend", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+async def generate_trend(req: func.HttpRequest) -> func.HttpResponse:
+    return await generate_trend_main(req)
 

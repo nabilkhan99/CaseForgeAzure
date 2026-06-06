@@ -6,6 +6,7 @@ create table if not exists trend_reports (
     window                jsonb,
     confidence            text check (confidence in ('low', 'medium', 'high')),
     overall_trajectory    text check (overall_trajectory in ('improving', 'static', 'declining')),
+    overall_narrative     text,
     recurring_themes      jsonb default '[]'::jsonb,
     style_patterns        jsonb default '[]'::jsonb,
     consistent_strengths  jsonb default '[]'::jsonb,
