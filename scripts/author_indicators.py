@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from typing import Any, Dict, List
 
 from app.schemas.indicators import StationIndicatorProposal
@@ -54,10 +55,8 @@ def validate_proposal(data: dict) -> StationIndicatorProposal:
     return StationIndicatorProposal(**data)
 
 
-async def _run(apply: bool, limit: int = 0) -> None:
+async def _run(apply: bool, limit: int = 0, provider: str = "anthropic") -> None:
     # Imported lazily so the module (and its unit tests) load without credentials.
-    from openai import AsyncAzureOpenAI
-
     from app.config import Settings
     from app.services.marking_service import (
         make_azure_model_call,
@@ -67,14 +66,40 @@ async def _run(apply: bool, limit: int = 0) -> None:
     from app.services.supabase_client import get_client
 
     settings = Settings()
-    client = AsyncAzureOpenAI(
-        azure_endpoint=settings.azure_openai_endpoint,
-        api_key=settings.azure_openai_api_key,
-        api_version=settings.azure_openai_marking_api_version or settings.azure_openai_api_version,
-    )
-    deployment = settings.azure_openai_marking_deployment
-    temperature = 0.2 if model_supports_temperature(deployment) else None
-    model_call = make_azure_model_call(client, deployment, temperature=temperature)
+
+    # Authoring is a one-time offline job, so it can use the strongest available
+    # model (Claude Opus) regardless of which model marks at runtime (gpt-5.4-mini).
+    if provider == "anthropic":
+        from anthropic import AsyncAnthropic
+
+        aclient = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        amodel = os.environ.get("AUTHORING_ANTHROPIC_MODEL", "claude-opus-4-8")
+
+        async def model_call(messages: List[Dict[str, str]]) -> str:
+            system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+            user = "\n\n".join(m["content"] for m in messages if m["role"] == "user")
+            resp = await aclient.messages.create(
+                model=amodel,
+                max_tokens=16000,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            return "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+
+        print(f"authoring with anthropic model {amodel}")
+    else:
+        from openai import AsyncAzureOpenAI
+
+        client = AsyncAzureOpenAI(
+            azure_endpoint=settings.azure_openai_endpoint,
+            api_key=settings.azure_openai_api_key,
+            api_version=settings.azure_openai_marking_api_version or settings.azure_openai_api_version,
+        )
+        deployment = settings.azure_openai_marking_deployment
+        temperature = 0.2 if model_supports_temperature(deployment) else None
+        model_call = make_azure_model_call(client, deployment, temperature=temperature)
+        print(f"authoring with azure deployment {deployment}")
+
     supabase = get_client(settings)
 
     rows = (
@@ -118,8 +143,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="Upsert proposals to Supabase")
     parser.add_argument("--limit", type=int, default=0, help="Process at most N stations (0 = all)")
+    parser.add_argument("--provider", choices=["anthropic", "azure"], default="anthropic",
+                        help="Authoring model: anthropic (Claude Opus, default) or azure (gpt-5.4-mini)")
     args = parser.parse_args()
-    asyncio.run(_run(args.apply, args.limit))
+    asyncio.run(_run(args.apply, args.limit, args.provider))
 
 
 if __name__ == "__main__":
