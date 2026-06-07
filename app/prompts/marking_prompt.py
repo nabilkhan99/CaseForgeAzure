@@ -73,10 +73,37 @@ def _statement_library_block() -> str:
     return "\n".join(out)
 
 
+OUTPUT_CONTRACT = """# OUTPUT JSON CONTRACT (use these EXACT field names and shapes)
+Return one JSON object:
+{
+  "session_id": str, "candidate_id": str, "case_id": str,
+  "overall": { "verdict": "Pass"|"Bare Pass"|"Bare Fail"|"Fail", "weighted_score": number, "max_score": 10.5, "one_line_summary": str, "tier3_override_applied": bool },
+  "domains": [ {
+    "domain": "data_gathering" | "clinical_management" | "relating_to_others",   // EXACT key, not the display name
+    "display_name": str,
+    "grade": "CP"|"P"|"F"|"CF",
+    "anchored_statements": [ { "title": str } ],
+    "what_you_did_well": [ { "label": str, "narrative": str, "evidence": { "quote": str, "timestamp_ms": int } } ],
+    "what_you_missed": [ { "label": str, "status": "partial"|"not_met", "consequence_tier": 0|1|2|3, "narrative": str, "evidence": { "quote": str, "timestamp_ms": int } } ],
+    "cue_handling": [ { "cue": str, "status": "explored"|"missed", "narrative": str, "evidence": { "quote": str, "timestamp_ms": int } } ],
+    "grade_mover": { "narrative": str },          // OBJECT, omit for CP domains
+    "model_moment": { "narrative": str, "source": "learning_points"|"rcgp_educator_notes"|"nice"|"sign"|"curriculum" },  // OBJECT, only for F or CF
+    "how_to_improve": [ { "narrative": str, "source": "learning_points"|"rcgp_educator_notes"|"nice"|"sign"|"curriculum" } ]
+  } ],
+  "timing": { "total_duration_ms": int|null, "data_gathering_end_ms": int|null, "flags": [ "data_gathering_overran"|"management_rushed"|"no_timing_data" ] },
+  "focus_areas": [ { "priority": int, "label": str, "narrative": str, "domain": str } ],
+  "capability_links": [ str ],
+  "confidence": { "transcript_quality": "high"|"medium"|"low", "notes": str }
+}
+Rules: domains MUST contain exactly the three domain keys above. "evidence" is always an OBJECT with "quote" and integer "timestamp_ms" (milliseconds, convert mm:ss), never a bare string. grade_mover, model_moment, and each how_to_improve entry are OBJECTS, never strings. Output JSON only."""
+
+
 def build_system_prompt() -> str:
     """Marking system prompt plus the bundled RCGP statement library and educator notes."""
     return (
         MARKING_PROMPT
+        + "\n\n"
+        + OUTPUT_CONTRACT
         + "\n\n"
         + _statement_library_block()
         + "\n\n# RCGP EDUCATOR NOTES (Explanation, Suggestions, Capability areas; ground how_to_improve in these)\n"

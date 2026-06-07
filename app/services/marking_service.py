@@ -70,6 +70,173 @@ def model_supports_temperature(deployment: str) -> bool:
     return True
 
 
+DOMAIN_DISPLAY = {
+    "data_gathering": "Data gathering and diagnosis",
+    "clinical_management": "Clinical management and medical complexity",
+    "relating_to_others": "Relating to others",
+}
+_VALID_SOURCES = {"learning_points", "rcgp_educator_notes", "nice", "sign", "curriculum"}
+
+
+def _parse_ts(value: Any) -> Optional[int]:
+    """Parse a timestamp (mm:ss string, numeric string, or int ms) to milliseconds."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    s = str(value).strip()
+    if ":" in s:
+        parts = s.split(":")
+        try:
+            mm, ss = int(parts[0]), int(parts[1])
+            return (mm * 60 + ss) * 1000
+        except (ValueError, IndexError):
+            return None
+    return int(s) if s.isdigit() else None
+
+
+def _domain_key(name: str) -> str:
+    low = (name or "").lower()
+    if "data gathering" in low or "diagnosis" in low:
+        return "data_gathering"
+    if "management" in low or "complexity" in low:
+        return "clinical_management"
+    if "relating" in low or "interpersonal" in low:
+        return "relating_to_others"
+    return name
+
+
+def _norm_item(it: dict, *, missed: bool = False, cue: bool = False) -> dict:
+    it = dict(it)
+    ts = it.pop("timestamp", None)
+    quote = it.get("quote")
+    ev = it.get("evidence")
+    if isinstance(ev, str):
+        it["evidence"] = {"quote": ev}
+    if isinstance(it.get("evidence"), dict):
+        e = it["evidence"]
+        if not e.get("quote") and isinstance(quote, str):
+            e["quote"] = quote
+        if e.get("timestamp_ms") is None:
+            e["timestamp_ms"] = _parse_ts(e.pop("timestamp", None) or ts)
+    elif isinstance(quote, str):
+        it["evidence"] = {"quote": quote, "timestamp_ms": _parse_ts(ts)}
+    if not it.get("narrative"):
+        it["narrative"] = (
+            it.get("point") or it.get("comment") or it.get("detail")
+            or it.get("text") or it.get("description") or ""
+        )
+    if not cue and not it.get("label"):
+        it["label"] = (
+            it.get("indicator") or it.get("title") or it.get("indicator_id")
+            or (it["narrative"][:60] if it.get("narrative") else "point")
+        )
+    if missed:
+        it["status"] = it["status"] if it.get("status") in ("partial", "not_met") else "not_met"
+        try:
+            ct = int(it.get("consequence_tier", 1))
+        except (TypeError, ValueError):
+            ct = 1
+        it["consequence_tier"] = max(0, min(3, ct or 1))
+    if cue:
+        it["status"] = it["status"] if it.get("status") in ("explored", "missed") else "missed"
+        if not it.get("cue"):
+            it["cue"] = it.get("label") or it.get("title") or (it.get("narrative", "")[:60] or "cue")
+    return it
+
+
+def normalize_feedback(data: dict) -> dict:
+    """Coerce a loosely-shaped model response into the Section 12 schema.
+
+    Models often return domain display names instead of keys, evidence as a bare
+    string with a sibling timestamp, and grade_mover / model_moment /
+    how_to_improve / anchored_statements as strings. This maps those variants onto
+    the strict schema before pydantic validation.
+    """
+    d = dict(data)
+    out_domains = []
+    for dom in d.get("domains") or []:
+        if not isinstance(dom, dict):
+            continue
+        dom = dict(dom)
+        orig = str(dom.get("domain", ""))
+        key = _domain_key(orig)
+        dom["domain"] = key
+        if not dom.get("display_name"):
+            dom["display_name"] = DOMAIN_DISPLAY.get(key, orig or key)
+        if isinstance(dom.get("what_you_did_well"), list):
+            dom["what_you_did_well"] = [_norm_item(x) for x in dom["what_you_did_well"] if isinstance(x, dict)]
+        if isinstance(dom.get("what_you_missed"), list):
+            dom["what_you_missed"] = [_norm_item(x, missed=True) for x in dom["what_you_missed"] if isinstance(x, dict)]
+        if isinstance(dom.get("cue_handling"), list):
+            dom["cue_handling"] = [_norm_item(x, cue=True) for x in dom["cue_handling"] if isinstance(x, dict)]
+        if isinstance(dom.get("anchored_statements"), list):
+            dom["anchored_statements"] = [
+                {"title": a} if isinstance(a, str) else a for a in dom["anchored_statements"]
+            ]
+        gm = dom.get("grade_mover")
+        if isinstance(gm, str):
+            dom["grade_mover"] = {"narrative": gm}
+        mm = dom.get("model_moment")
+        if isinstance(mm, str):
+            dom["model_moment"] = {"narrative": mm, "source": "learning_points"}
+        elif isinstance(mm, dict) and mm.get("source") not in _VALID_SOURCES:
+            mm["source"] = "learning_points"
+        if isinstance(dom.get("how_to_improve"), list):
+            improved = []
+            for h in dom["how_to_improve"]:
+                if isinstance(h, str):
+                    improved.append({"narrative": h, "source": "learning_points"})
+                elif isinstance(h, dict):
+                    h = dict(h)
+                    if not h.get("narrative"):
+                        h["narrative"] = h.get("text") or h.get("suggestion") or ""
+                    if h.get("source") not in _VALID_SOURCES:
+                        h["source"] = "learning_points"
+                    improved.append(h)
+            dom["how_to_improve"] = improved
+        out_domains.append(dom)
+    d["domains"] = out_domains
+
+    c = d.get("confidence")
+    if isinstance(c, str):
+        d["confidence"] = {"transcript_quality": c if c in ("high", "medium", "low") else "high", "notes": ""}
+    elif isinstance(c, dict):
+        if c.get("transcript_quality") not in ("high", "medium", "low"):
+            c["transcript_quality"] = "high"
+        c.setdefault("notes", "")
+    else:
+        d["confidence"] = {"transcript_quality": "high", "notes": ""}
+
+    if isinstance(d.get("focus_areas"), list):
+        areas = []
+        for i, f in enumerate(d["focus_areas"], 1):
+            if isinstance(f, str):
+                areas.append({"priority": i, "label": f[:60], "narrative": f, "domain": ""})
+                continue
+            if not isinstance(f, dict):
+                continue
+            f = dict(f)
+            try:
+                f["priority"] = int(f.get("priority", i))
+            except (TypeError, ValueError):
+                f["priority"] = i
+            if not f.get("label"):
+                f["label"] = (f.get("narrative", "") or "focus")[:60]
+            if not f.get("narrative"):
+                f["narrative"] = f.get("label", "")
+            f["domain"] = _domain_key(str(f.get("domain", "") or ""))
+            areas.append(f)
+        d["focus_areas"] = areas
+
+    if not isinstance(d.get("capability_links"), list):
+        d["capability_links"] = []
+    o = d.get("overall")
+    if isinstance(o, dict):
+        o.setdefault("one_line_summary", o.get("summary", ""))
+    return d
+
+
 def make_azure_model_call(
     client: Any, deployment: str, temperature: Optional[float] = 0.2
 ) -> ModelCall:
@@ -132,7 +299,7 @@ class MarkingService:
         try:
             data = await self._get_feedback_json(messages)
             data.setdefault("session_id", session_id)
-            fb = SingleCaseFeedback(**data)
+            fb = SingleCaseFeedback(**normalize_feedback(data))
         except Exception:
             self.repo.mark_errored(session_id)
             raise

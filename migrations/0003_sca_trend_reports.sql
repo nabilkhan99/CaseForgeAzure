@@ -3,7 +3,7 @@
 create table if not exists trend_reports (
     id                    uuid primary key default gen_random_uuid(),
     candidate_id          uuid not null references auth.users(id) on delete cascade,
-    window                jsonb,
+    "window"              jsonb,  -- quoted: window is a reserved word
     confidence            text check (confidence in ('low', 'medium', 'high')),
     overall_trajectory    text check (overall_trajectory in ('improving', 'static', 'declining')),
     overall_narrative     text,
