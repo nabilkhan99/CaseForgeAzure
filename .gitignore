@@ -17,3 +17,6 @@ venvv/
 !.vscode/launch.json
 !.vscode/extensions.json.venv/
 .venv-clinical/
+
+# AI-generated indicator proposals (review artifact, not source)
+scripts/indicator_proposals.jsonl

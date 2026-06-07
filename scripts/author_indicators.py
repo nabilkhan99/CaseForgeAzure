@@ -54,7 +54,7 @@ def validate_proposal(data: dict) -> StationIndicatorProposal:
     return StationIndicatorProposal(**data)
 
 
-async def _run(apply: bool) -> None:
+async def _run(apply: bool, limit: int = 0) -> None:
     # Imported lazily so the module (and its unit tests) load without credentials.
     from openai import AsyncAzureOpenAI
 
@@ -86,7 +86,9 @@ async def _run(apply: bool) -> None:
         .data
         or []
     )
-    print(f"{len(rows)} stations need indicators")
+    if limit:
+        rows = rows[:limit]
+    print(f"{len(rows)} stations to process")
 
     out_path = "scripts/indicator_proposals.jsonl"
     with open(out_path, "w", encoding="utf-8") as f:
@@ -115,8 +117,9 @@ async def _run(apply: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="Upsert proposals to Supabase")
+    parser.add_argument("--limit", type=int, default=0, help="Process at most N stations (0 = all)")
     args = parser.parse_args()
-    asyncio.run(_run(args.apply))
+    asyncio.run(_run(args.apply, args.limit))
 
 
 if __name__ == "__main__":
