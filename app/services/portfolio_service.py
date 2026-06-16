@@ -1,15 +1,19 @@
 # app/services/portfolio_service.py
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import openai
 from openai import AsyncOpenAI, AsyncAzureOpenAI
 import asyncio
+import logging
 from ..config import Settings, capability_content
 from ..utils.text_processing import extract_sections, generate_title
 from ..utils.capabilities import parse_capabilities, format_capabilities
 from ..models import CaseReviewResponse, CaseReviewSection
+from .portfolio_audit import PortfolioOutputAuditLogger
+
+logger = logging.getLogger(__name__)
 
 class PortfolioService:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, audit_logger: Optional[PortfolioOutputAuditLogger] = None):
         self.settings = settings
         self.openai_client = AsyncAzureOpenAI(
             azure_endpoint=settings.azure_openai_endpoint,
@@ -17,6 +21,32 @@ class PortfolioService:
             api_version=settings.azure_openai_api_version
         )
         self.capabilities = parse_capabilities(capability_content)
+        self.audit_logger = audit_logger or PortfolioOutputAuditLogger(
+            csv_path=settings.portfolio_output_audit_csv_path,
+            enabled=settings.portfolio_output_audit_enabled,
+        )
+
+    def _record_portfolio_output(
+        self,
+        *,
+        operation: str,
+        request_payload: Dict[str, Any],
+        output_text: str,
+        output_payload: Optional[Any] = None,
+    ) -> None:
+        if hasattr(output_payload, "model_dump"):
+            output_payload = output_payload.model_dump()
+
+        try:
+            self.audit_logger.record(
+                operation=operation,
+                model_deployment=self.settings.azure_openai_deployment,
+                request_payload=request_payload,
+                output_text=output_text,
+                output_payload=output_payload,
+            )
+        except Exception as exc:
+            logger.warning("Failed to record portfolio AI output audit row: %s", exc)
 
     async def generate_case_review(
         self,
@@ -99,6 +129,15 @@ Selected Capabilities:
                 case_title=case_title,
                 review_content=review_content,
                 sections=CaseReviewSection(**sections)
+            )
+            self._record_portfolio_output(
+                operation="generate_review",
+                request_payload={
+                    "case_description": case_description,
+                    "selected_capabilities": selected_capabilities,
+                },
+                output_text=review_content,
+                output_payload=response,
             )
             print(f"   ⏱️  Step 7 took {time.time() - step_start:.2f}s")
             
@@ -266,11 +305,22 @@ Selected Capabilities:
             else:
                 case_title = await generate_title(original_case.split("\n")[0], self.openai_client, self.settings)
 
-            return CaseReviewResponse(
+            response_payload = CaseReviewResponse(
                 case_title=case_title,
                 review_content=improved_content,
                 sections=CaseReviewSection(**sections)
             )
+            self._record_portfolio_output(
+                operation="improve_review",
+                request_payload={
+                    "original_case": original_case,
+                    "improvement_prompt": improvement_prompt,
+                    "selected_capabilities": selected_capabilities,
+                },
+                output_text=improved_content,
+                output_payload=response_payload,
+            )
+            return response_payload
 
         except Exception as e:
             raise Exception(f"Error improving case review: {str(e)}")
@@ -359,7 +409,18 @@ Selected Capabilities:
             )
             
             improved_content = completion.choices[0].message.content
-            return improved_content.strip()
+            improved_content = improved_content.strip()
+            self._record_portfolio_output(
+                operation="improve_section",
+                request_payload={
+                    "section_type": section_type,
+                    "section_content": section_content,
+                    "improvement_prompt": improvement_prompt,
+                    "capability_name": capability_name,
+                },
+                output_text=improved_content,
+            )
+            return improved_content
 
         except Exception as e:
             raise Exception(f"Error improving section: {str(e)}")
