@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     # Application Settings
     debug: bool = False
     environment: str = "development"
+    portfolio_output_audit_enabled: bool = True
+    portfolio_output_audit_csv_path: str = "/tmp/portfolio_ai_outputs.csv"
 
 #     SYSTEM_PROMPT: str = """
 # You are an expert RCGP (Royal College of General Practitioners) Portfolio Assistant. Your task is to transform raw clinical notes into a high-quality "Clinical Case Review" (CCR) for a GP Trainee's ePortfolio.
@@ -600,6 +602,8 @@ I am aware that I need to continue to improve my skills in seeing patients in re
         kwargs['temperature'] = float(os.environ.get('TEMPERATURE', '0.5'))
         kwargs['debug'] = os.environ.get('DEBUG', 'false').lower() == 'true'
         kwargs['environment'] = os.environ.get('ENVIRONMENT', 'development')
+        kwargs['portfolio_output_audit_enabled'] = os.environ.get('PORTFOLIO_OUTPUT_AUDIT_ENABLED', 'true').lower() == 'true'
+        kwargs['portfolio_output_audit_csv_path'] = os.environ.get('PORTFOLIO_OUTPUT_AUDIT_CSV_PATH', '/tmp/portfolio_ai_outputs.csv')
         
         # Update initialization to include Azure settings
         kwargs['azure_openai_api_key'] = os.environ.get('AZURE_OPENAI_API_KEY', '')
