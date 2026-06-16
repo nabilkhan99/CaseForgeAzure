@@ -10,6 +10,7 @@ import logging
 from .models import (
     CaseReviewRequest,
     CaseReviewResponse,
+    PlaygroundCaseReviewRequest,
     ImprovementRequest,
     CapabilitiesResponse,
     ErrorResponse
@@ -31,17 +32,29 @@ app = FastAPI(
 # Load settings
 settings = Settings()
 
+
+def parse_cors_origins(value: str) -> List[str]:
+    return [origin.strip() for origin in value.split(",") if origin.strip()]
+
+
 # Configure CORS
-origins = [
+default_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
+    "http://localhost:3002",
+    "http://127.0.0.1:3002",
+    "https://fourteenfisherman.com",
+    "https://www.fourteenfisherman.com",
+    "https://case-forge-frontend-n5fd.vercel.app",
 ]
+origins = default_origins + parse_cors_origins(settings.cors_allowed_origins)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=settings.cors_allowed_origin_regex or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -74,6 +87,35 @@ async def generate_review(
         return result
     except Exception as e:
         logger.error(f"Error generating review: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/portfolio-playground/prompt")
+async def get_portfolio_playground_prompt():
+    try:
+        return {
+            "system_prompt": settings.SYSTEM_PROMPT.strip(),
+            "source": "CaseForgeAzure Settings.SYSTEM_PROMPT",
+        }
+    except Exception as e:
+        logger.error(f"Error fetching portfolio prompt: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/portfolio-playground/generate-review", response_model=CaseReviewResponse)
+async def generate_portfolio_playground_review(
+    request: PlaygroundCaseReviewRequest,
+    portfolio_service: PortfolioService = Depends(get_portfolio_service)
+):
+    try:
+        logger.info("Generating playground review with prompt override")
+        result = await portfolio_service.generate_case_review(
+            case_description=request.case_description,
+            selected_capabilities=request.selected_capabilities,
+            system_prompt_override=request.system_prompt,
+            enforce_output_contract=True,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error generating playground review: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/improve-review", response_model=CaseReviewResponse)

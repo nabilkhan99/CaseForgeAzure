@@ -4,12 +4,14 @@ import os
 
 class Settings(BaseSettings):
     # API Keys
-    openai_api_key: str
-    anthropic_api_key: str
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
     azure_openai_api_key: str
     
     # URLs
     frontend_url: str = "http://localhost:3000"
+    cors_allowed_origins: str = ""
+    cors_allowed_origin_regex: str = ""
     
     # AI Model Settings
     openai_model: str = "gpt-4.1-mini"

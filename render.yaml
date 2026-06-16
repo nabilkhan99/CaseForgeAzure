@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: fourteen-fisherman-portfolio-dev-api
+    runtime: python
+    repo: https://github.com/nabilkhan99/CaseForgeAzure.git
+    branch: develop
+    plan: free
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: AZURE_OPENAI_API_KEY
+        sync: false
+      - key: AZURE_OPENAI_ENDPOINT
+        sync: false
+      - key: AZURE_OPENAI_DEPLOYMENT
+        value: gpt-4.1-mini
+      - key: AZURE_OPENAI_API_VERSION
+        value: 2025-01-01-preview
+      - key: CORS_ALLOWED_ORIGIN_REGEX
+        value: https://.*\.vercel\.app

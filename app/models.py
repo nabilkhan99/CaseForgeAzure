@@ -6,6 +6,9 @@ class CaseReviewRequest(BaseModel):
     case_description: str = Field(..., min_length=10, description="The case description to review")
     selected_capabilities: List[str] = Field(..., min_items=1, max_items=3, description="List of selected capabilities")
 
+class PlaygroundCaseReviewRequest(CaseReviewRequest):
+    system_prompt: str = Field(..., min_length=50, description="Prompt override used only for the playground request")
+
 class CaseReviewSection(BaseModel):
     brief_description: str
     capabilities: Dict[str, str]

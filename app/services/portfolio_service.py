@@ -7,6 +7,7 @@ from ..config import Settings, capability_content
 from ..utils.text_processing import extract_sections, generate_title
 from ..utils.capabilities import parse_capabilities, format_capabilities
 from ..models import CaseReviewResponse, CaseReviewSection
+from .portfolio_prompts import build_playground_system_prompt
 
 class PortfolioService:
     def __init__(self, settings: Settings):
@@ -21,7 +22,9 @@ class PortfolioService:
     async def generate_case_review(
         self,
         case_description: str,
-        selected_capabilities: List[str]
+        selected_capabilities: List[str],
+        system_prompt_override: Optional[str] = None,
+        enforce_output_contract: bool = False,
     ) -> CaseReviewResponse:
         import time
         start_time = time.time()
@@ -33,10 +36,13 @@ class PortfolioService:
             
             print("🔵 Step 2: Building messages...")
             step_start = time.time()
+            system_prompt = system_prompt_override or self.settings.SYSTEM_PROMPT
+            if enforce_output_contract:
+                system_prompt = build_playground_system_prompt(system_prompt)
             messages = [
                 {
                     "role": "system",
-                    "content": self.settings.SYSTEM_PROMPT
+                    "content": system_prompt
                 },
                 {
                     "role": "user",
