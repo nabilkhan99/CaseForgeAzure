@@ -76,6 +76,14 @@ DOMAIN_DISPLAY = {
     "relating_to_others": "Relating to others",
 }
 _VALID_SOURCES = {"learning_points", "rcgp_educator_notes", "nice", "sign", "curriculum"}
+_VALID_EVIDENCE_KINDS = {"supporting_quote", "patient_cue", "not_asked", "no_direct_quote"}
+_GENERIC_OPENING_PATTERNS = (
+    "tell me what's wrong",
+    "tell me what is wrong",
+    "what can i do for you",
+    "what seems to be the problem",
+    "how can i help",
+)
 
 
 def _parse_ts(value: Any) -> Optional[int]:
@@ -93,6 +101,25 @@ def _parse_ts(value: Any) -> Optional[int]:
         except (ValueError, IndexError):
             return None
     return int(s) if s.isdigit() else None
+
+
+def _looks_like_non_evidence_quote(quote: Any) -> bool:
+    """Return true for generic doctor openers that do not evidence an omission."""
+    if not isinstance(quote, str):
+        return True
+    q = quote.strip().lower()
+    if len(q) < 44:
+        return True
+    return any(pattern in q for pattern in _GENERIC_OPENING_PATTERNS)
+
+
+def _absence_evidence(status: str | None = None) -> dict:
+    return {
+        "evidence_kind": "not_asked" if status == "not_met" else "no_direct_quote",
+        "quote": None,
+        "timestamp_ms": None,
+        "speaker": None,
+    }
 
 
 def _domain_key(name: str) -> str:
@@ -119,8 +146,14 @@ def _norm_item(it: dict, *, missed: bool = False, cue: bool = False) -> dict:
             e["quote"] = quote
         if e.get("timestamp_ms") is None:
             e["timestamp_ms"] = _parse_ts(e.pop("timestamp", None) or ts)
+        if e.get("evidence_kind") not in _VALID_EVIDENCE_KINDS:
+            e["evidence_kind"] = "patient_cue" if cue else "supporting_quote"
     elif isinstance(quote, str):
-        it["evidence"] = {"quote": quote, "timestamp_ms": _parse_ts(ts)}
+        it["evidence"] = {
+            "evidence_kind": "patient_cue" if cue else "supporting_quote",
+            "quote": quote,
+            "timestamp_ms": _parse_ts(ts),
+        }
     if not it.get("narrative"):
         it["narrative"] = (
             it.get("point") or it.get("comment") or it.get("detail")
@@ -138,10 +171,23 @@ def _norm_item(it: dict, *, missed: bool = False, cue: bool = False) -> dict:
         except (TypeError, ValueError):
             ct = 1
         it["consequence_tier"] = max(0, min(3, ct or 1))
+        ev = it.get("evidence")
+        if not isinstance(ev, dict) or _looks_like_non_evidence_quote(ev.get("quote")):
+            it["evidence"] = _absence_evidence(it.get("status"))
+        elif ev.get("evidence_kind") == "supporting_quote":
+            ev["evidence_kind"] = "patient_cue"
     if cue:
         it["status"] = it["status"] if it.get("status") in ("explored", "missed") else "missed"
         if not it.get("cue"):
             it["cue"] = it.get("label") or it.get("title") or (it.get("narrative", "")[:60] or "cue")
+        if not isinstance(it.get("evidence"), dict):
+            it["evidence"] = _absence_evidence()
+        else:
+            it["evidence"]["evidence_kind"] = "patient_cue"
+    elif not missed and not isinstance(it.get("evidence"), dict):
+        # Strengths should be quote-backed where possible, but tolerate older or
+        # imperfect model output without failing the whole marking run.
+        it["evidence"] = None
     return it
 
 

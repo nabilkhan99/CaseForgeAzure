@@ -15,7 +15,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.utils.verdict import GRADE_POINTS
+from app.utils.verdict import CM_WEIGHT, GRADE_POINTS
 
 Grade = Literal["CP", "P", "F", "CF"]
 DomainKey = Literal["data_gathering", "clinical_management", "relating_to_others"]
@@ -25,11 +25,13 @@ CueStatus = Literal["explored", "missed"]
 Source = Literal["learning_points", "rcgp_educator_notes", "nice", "sign", "curriculum"]
 TimingFlag = Literal["data_gathering_overran", "management_rushed", "no_timing_data"]
 TranscriptQuality = Literal["high", "medium", "low"]
+EvidenceKind = Literal["supporting_quote", "patient_cue", "not_asked", "no_direct_quote"]
 
 
 class Evidence(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    quote: str
+    evidence_kind: EvidenceKind = "supporting_quote"
+    quote: Optional[str] = None
     timestamp_ms: Optional[int] = None
     speaker: Optional[Literal["candidate", "patient"]] = None
 
@@ -88,6 +90,9 @@ class DomainFeedback(BaseModel):
     display_name: str
     grade: Grade
     grade_points: int = 0
+    max_points: float = 3.0
+    weighted_points: float = 0.0
+    is_weighted: bool = False
     anchored_statements: List[AnchoredStatement] = []
     what_you_did_well: List[DidWell] = []
     what_you_missed: List[Missed] = []
@@ -100,6 +105,12 @@ class DomainFeedback(BaseModel):
     def _normalise_conditionals(self) -> "DomainFeedback":
         # grade_points is authoritative from the grade, not the model.
         self.grade_points = GRADE_POINTS[self.grade]
+        self.is_weighted = self.domain == "clinical_management"
+        self.max_points = 3.0 * (CM_WEIGHT if self.is_weighted else 1.0)
+        self.weighted_points = round(
+            self.grade_points * (CM_WEIGHT if self.is_weighted else 1.0),
+            1,
+        )
         # grade_mover only for domains below CP (Section 9.2).
         if self.grade == "CP":
             self.grade_mover = None

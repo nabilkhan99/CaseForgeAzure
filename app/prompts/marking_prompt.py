@@ -83,9 +83,9 @@ Return one JSON object:
     "display_name": str,
     "grade": "CP"|"P"|"F"|"CF",
     "anchored_statements": [ { "title": str } ],
-    "what_you_did_well": [ { "label": str, "narrative": str, "evidence": { "quote": str, "timestamp_ms": int } } ],
-    "what_you_missed": [ { "label": str, "status": "partial"|"not_met", "consequence_tier": 0|1|2|3, "narrative": str, "evidence": { "quote": str, "timestamp_ms": int } } ],
-    "cue_handling": [ { "cue": str, "status": "explored"|"missed", "narrative": str, "evidence": { "quote": str, "timestamp_ms": int } } ],
+    "what_you_did_well": [ { "label": str, "narrative": str, "evidence": { "evidence_kind": "supporting_quote", "quote": str, "timestamp_ms": int, "speaker": "candidate"|"patient" } } ],
+    "what_you_missed": [ { "label": str, "status": "partial"|"not_met", "consequence_tier": 0|1|2|3, "narrative": str, "evidence": { "evidence_kind": "patient_cue"|"not_asked"|"no_direct_quote", "quote": str|null, "timestamp_ms": int|null, "speaker": "candidate"|"patient"|null } } ],
+    "cue_handling": [ { "cue": str, "status": "explored"|"missed", "narrative": str, "evidence": { "evidence_kind": "patient_cue", "quote": str, "timestamp_ms": int, "speaker": "patient" } } ],
     "grade_mover": { "narrative": str },          // OBJECT, omit for CP domains
     "model_moment": { "narrative": str, "source": "learning_points"|"rcgp_educator_notes"|"nice"|"sign"|"curriculum" },  // OBJECT, only for F or CF
     "how_to_improve": [ { "narrative": str, "source": "learning_points"|"rcgp_educator_notes"|"nice"|"sign"|"curriculum" } ]
@@ -95,7 +95,7 @@ Return one JSON object:
   "capability_links": [ str ],
   "confidence": { "transcript_quality": "high"|"medium"|"low", "notes": str }
 }
-Rules: domains MUST contain exactly the three domain keys above. "evidence" is always an OBJECT with "quote" and integer "timestamp_ms" (milliseconds, convert mm:ss), never a bare string. grade_mover, model_moment, and each how_to_improve entry are OBJECTS, never strings. Output JSON only."""
+Rules: domains MUST contain exactly the three domain keys above. "evidence" is always an OBJECT or null, never a bare string. Use evidence_kind "supporting_quote" only for true positive evidence. Use "patient_cue" when a patient phrase created the opportunity that was taken or missed. Use "not_asked" when the candidate omitted an area and there is no meaningful transcript quote because the question was never asked. Use "no_direct_quote" when the weakness is inferred from the consultation flow. Do not attach generic candidate openings such as "tell me what is wrong with you" or "what can I do for you" to unrelated missed items. grade_mover, model_moment, and each how_to_improve entry are OBJECTS, never strings. Output JSON only."""
 
 
 def build_system_prompt() -> str:

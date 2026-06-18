@@ -42,6 +42,9 @@ def test_system_prompt_carries_rules_and_library():
     assert "prescribing of medication was inappropriate" in sp
     # educator notes bundled
     assert "Capability area" in sp
+    assert "evidence_kind" in sp
+    assert "not_asked" in sp
+    assert "Do not attach generic candidate openings" in sp
 
 
 def test_build_marking_messages_shape():

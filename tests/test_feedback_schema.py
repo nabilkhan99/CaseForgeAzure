@@ -71,6 +71,31 @@ def test_grade_points_derived_from_grade():
     assert d.grade_points == 1
 
 
+def test_weighted_domain_points_are_derived():
+    d = DomainFeedback(**_domain(domain="clinical_management", grade="P", grade_points=99))
+    assert d.grade_points == 2
+    assert d.is_weighted is True
+    assert d.max_points == 4.5
+    assert d.weighted_points == 3.0
+
+
+def test_absence_evidence_is_valid():
+    d = DomainFeedback(**_domain(
+        what_you_missed=[
+            dict(
+                label="Skin and nipple red flags",
+                status="not_met",
+                consequence_tier=2,
+                narrative="This was not asked.",
+                evidence={"evidence_kind": "not_asked", "quote": None, "timestamp_ms": None},
+            )
+        ]
+    ))
+    assert d.what_you_missed[0].evidence is not None
+    assert d.what_you_missed[0].evidence.evidence_kind == "not_asked"
+    assert d.what_you_missed[0].evidence.quote is None
+
+
 def test_grade_mover_nulled_on_cp():
     d = DomainFeedback(**_domain(grade="CP", grade_points=3, grade_mover={"narrative": "should not exist"}))
     assert d.grade_mover is None

@@ -8,7 +8,12 @@ single malformed model response is retried.
 import json
 import pytest
 
-from app.services.marking_service import MarkingService, build_case_pack, parse_model_json
+from app.services.marking_service import (
+    MarkingService,
+    build_case_pack,
+    normalize_feedback,
+    parse_model_json,
+)
 
 
 STATION = {
@@ -144,6 +149,10 @@ async def test_verdict_recomputed_and_dashes_stripped():
     # Persisted + session completed; coarse int score on the session.
     assert repo.saved[0] == "sess_1"
     assert repo.completed == ("sess_1", 6)  # round(5.5) -> 6
+    management = next(d for d in result["domains"] if d["domain"] == "clinical_management")
+    assert management["max_points"] == 4.5
+    assert management["weighted_points"] == 1.5
+    assert management["is_weighted"] is True
 
 
 async def test_tier3_missed_item_caps_to_fail():
@@ -184,3 +193,48 @@ def test_build_case_pack_maps_station_columns():
     assert pack["mark_scheme_prose"]["clinical_management"].startswith("Potent topical steroid")
     assert pack["learning_points"].startswith("Hydrocortisone")
     assert pack["case_type"] == "patient_direct"
+
+
+def test_normalize_feedback_strips_generic_missed_quote():
+    payload = _model_feedback()
+    payload["domains"][0]["what_you_missed"] = [
+        {
+            "label": "Skin and nipple red flags",
+            "status": "not_met",
+            "consequence_tier": 2,
+            "narrative": "You did not ask about nipple discharge or skin tethering.",
+            "evidence": {
+                "quote": "Tell me what is wrong with you then.",
+                "timestamp_ms": 0,
+                "speaker": "candidate",
+            },
+        }
+    ]
+
+    normalized = normalize_feedback(payload)
+    evidence = normalized["domains"][0]["what_you_missed"][0]["evidence"]
+    assert evidence["evidence_kind"] == "not_asked"
+    assert evidence["quote"] is None
+    assert evidence["timestamp_ms"] is None
+
+
+def test_normalize_feedback_marks_patient_cue_for_missed_quote():
+    payload = _model_feedback()
+    payload["domains"][0]["what_you_missed"] = [
+        {
+            "label": "Persistent breast lump cue",
+            "status": "partial",
+            "consequence_tier": 2,
+            "narrative": "The persistence after a period should have prompted red flag screening.",
+            "evidence": {
+                "quote": "I found a lump in my right breast in the shower a couple of weeks ago, and I thought it would go after my period, but it has not.",
+                "timestamp_ms": 0,
+                "speaker": "patient",
+            },
+        }
+    ]
+
+    normalized = normalize_feedback(payload)
+    evidence = normalized["domains"][0]["what_you_missed"][0]["evidence"]
+    assert evidence["evidence_kind"] == "patient_cue"
+    assert evidence["quote"].startswith("I found a lump")
