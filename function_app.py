@@ -7,6 +7,8 @@ from functions.select_capabilities import main as select_capabilities_main
 from functions.select_experience_groups import main as select_experience_groups_main
 from functions.mark_consultation import main as mark_consultation_main
 from functions.generate_trend import main as generate_trend_main
+from functions.portfolio_playground_prompt import main as portfolio_playground_prompt_main
+from functions.portfolio_playground_generate_review import main as portfolio_playground_generate_review_main
 import logging
 app = func.FunctionApp()
 
@@ -49,4 +51,15 @@ async def mark_consultation(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="generate-trend", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
 async def generate_trend(req: func.HttpRequest) -> func.HttpResponse:
     return await generate_trend_main(req)
+
+# Portfolio prompt playground — consolidated off the Render dev-api onto Azure.
+@app.function_name(name="portfolio-playground-prompt")
+@app.route(route="portfolio-playground/prompt", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])
+async def portfolio_playground_prompt(req: func.HttpRequest) -> func.HttpResponse:
+    return await portfolio_playground_prompt_main(req)
+
+@app.function_name(name="portfolio-playground-generate-review")
+@app.route(route="portfolio-playground/generate-review", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+async def portfolio_playground_generate_review(req: func.HttpRequest) -> func.HttpResponse:
+    return await portfolio_playground_generate_review_main(req)
 
