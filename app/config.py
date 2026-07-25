@@ -23,10 +23,21 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str = "https://ai-caseforge2025a060083517978.openai.azure.com"
     azure_openai_api_version: str = "2025-01-01-preview"
     azure_openai_deployment: str = "gpt-4.1-mini"
-    # Deployment used for SCA marking and trend. Set to the exact Azure Foundry
-    # deployment name (e.g. "gpt-5.4-mini"). Build Package advises a strong model
-    # for marking; a mini model must be validated against the Phase 9 golden cases.
-    azure_openai_marking_deployment: str = "gpt-5.4-mini"
+    # Deployment used for SCA marking and trend. Must match an Azure Foundry
+    # deployment name on the endpoint above, not a public model id.
+    #
+    # Prod runs gpt-5.6-luna (set 25 Jul 2026). gpt-5.4-mini, gpt-5.6-luna and
+    # gpt-5.6-terra are all deployed on fourteenfisherman-resource at capacity
+    # 50, so swapping is one app-setting change with no redeploy:
+    #   az functionapp config appsettings set -n caseforge2025a -g caseforge2025_a \
+    #     --settings AZURE_OPENAI_MARKING_DEPLOYMENT=<deployment>
+    #
+    # On the golden gate all three score the same (1 of 3); they differ mainly in
+    # latency — roughly 23s / 34s / 51s per case for mini / luna / terra. The gate
+    # is a smoke test, not a quality verdict: three exact-match assertions is a
+    # crude arbiter for an LLM, and all three models grade harsher than the human
+    # anchors on the same two borderline cases, so the anchors want recalibrating.
+    azure_openai_marking_deployment: str = "gpt-5.6-luna"
     # Optional newer api-version for the marking deployment (GPT-5 family may need
     # a later preview); falls back to azure_openai_api_version when empty.
     azure_openai_marking_api_version: str = ""
