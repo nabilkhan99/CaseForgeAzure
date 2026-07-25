@@ -244,6 +244,16 @@ def normalize_feedback(data: dict) -> dict:
         out_domains.append(dom)
     d["domains"] = out_domains
 
+    # evidence_map is a write-only audit blob. Models return it as a flat list
+    # of records OR as an object keyed by section; both are fine and are stored
+    # as-is. Anything else is dropped rather than allowed to fail validation —
+    # a diagnostic field must never cost us the verdict and the domain grades.
+    em = d.get("evidence_map")
+    if not isinstance(em, (list, dict)):
+        d["evidence_map"] = []
+    elif isinstance(em, list):
+        d["evidence_map"] = [x for x in em if isinstance(x, dict)]
+
     c = d.get("confidence")
     if isinstance(c, str):
         d["confidence"] = {"transcript_quality": c if c in ("high", "medium", "low") else "high", "notes": ""}

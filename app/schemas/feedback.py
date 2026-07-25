@@ -11,7 +11,7 @@ Two invariants enforced here, independent of what the model returns:
 """
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -162,4 +162,12 @@ class SingleCaseFeedback(BaseModel):
     focus_areas: List[FocusArea] = []
     capability_links: List[str] = []
     confidence: Confidence
-    evidence_map: List[dict] = []
+    # Write-only audit blob: persisted to session_results.evidence_map (jsonb)
+    # and read by nothing. Models legitimately return it either as a flat list
+    # of indicator records or as an object keyed by section
+    # (case_assessment / universal_backbone / capability_backbone) — gpt-5.4-mini
+    # and gpt-5.6-terra both prefer the object form. It was typed List[dict],
+    # so the object form raised ValidationError and aborted the WHOLE mark,
+    # losing the verdict and every domain grade over a diagnostic field.
+    # Accept both; normalize_feedback() drops anything else.
+    evidence_map: Union[List[Dict[str, Any]], Dict[str, Any]] = []
