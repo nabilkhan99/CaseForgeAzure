@@ -55,7 +55,7 @@ def validate_proposal(data: dict) -> StationIndicatorProposal:
     return StationIndicatorProposal(**data)
 
 
-async def _run(apply: bool, limit: int = 0, provider: str = "anthropic") -> None:
+async def _run(apply: bool, limit: int = 0, provider: str = "anthropic", include_inactive: bool = False) -> None:
     # Imported lazily so the module (and its unit tests) load without credentials.
     from app.config import Settings
     from app.services.marking_service import (
@@ -102,15 +102,16 @@ async def _run(apply: bool, limit: int = 0, provider: str = "anthropic") -> None
 
     supabase = get_client(settings)
 
-    rows = (
+    query = (
         supabase.table("stations")
         .select("*")
         .is_("mark_scheme_structured", "null")
-        .eq("is_active", True)
-        .execute()
-        .data
-        or []
     )
+    # Staged stations (is_active=false, e.g. the 80-200 bank pre-activation)
+    # need authoring BEFORE they go live, so the filter is optional.
+    if not include_inactive:
+        query = query.eq("is_active", True)
+    rows = query.execute().data or []
     if limit:
         rows = rows[:limit]
     print(f"{len(rows)} stations to process")
@@ -127,11 +128,17 @@ async def _run(apply: bool, limit: int = 0, provider: str = "anthropic") -> None
             record = {"station_id": station["id"], "title": station.get("title"), "proposal": proposal.model_dump()}
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             if apply:
+                # An ingested row's case_type is source-document ground truth;
+                # the model only fills it where the row has none, and the
+                # third_party conditional must agree with whichever value wins.
+                case_type = station.get("case_type") or proposal.case_type
+                conditional = proposal.conditional_features.model_dump()
+                conditional["third_party"] = case_type == "third_party"
                 supabase.table("stations").update(
                     {
                         "mark_scheme_structured": proposal.mark_scheme_structured.model_dump(),
-                        "case_type": proposal.case_type,
-                        "conditional_features": proposal.conditional_features.model_dump(),
+                        "case_type": case_type,
+                        "conditional_features": conditional,
                     }
                 ).eq("id", station["id"]).execute()
             print(f"  {station.get('title')}: ok{' (applied)' if apply else ''}")
@@ -143,10 +150,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="Upsert proposals to Supabase")
     parser.add_argument("--limit", type=int, default=0, help="Process at most N stations (0 = all)")
+    parser.add_argument("--include-inactive", action="store_true", help="Also author staged (is_active=false) stations")
     parser.add_argument("--provider", choices=["anthropic", "azure"], default="anthropic",
                         help="Authoring model: anthropic (Claude Opus, default) or azure (gpt-5.4-mini)")
     args = parser.parse_args()
-    asyncio.run(_run(args.apply, args.limit, args.provider))
+    asyncio.run(_run(args.apply, args.limit, args.provider, args.include_inactive))
 
 
 if __name__ == "__main__":
