@@ -93,7 +93,11 @@ class SessionRepository:
             "next_steps": payload.get("next_steps"),
             "caution": payload.get("caution"),
         }
-        self.client.table("trend_reports").insert(row).execute()
+        # One live report per candidate (0005 unique constraint): a rebuild
+        # replaces the old row instead of accumulating history.
+        self.client.table("trend_reports").upsert(
+            row, on_conflict="candidate_id"
+        ).execute()
 
     def get_candidate_results(self, candidate_id: str) -> List[Dict[str, Any]]:
         """Persisted single-case results for a candidate, oldest first."""
