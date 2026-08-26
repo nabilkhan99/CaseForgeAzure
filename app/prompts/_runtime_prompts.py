@@ -96,7 +96,49 @@ WHAT TO SURFACE
 - Strengths that recur, so the report is balanced and the candidate knows what to keep doing.
 
 OUTPUT
-Return JSON with: a short overall narrative; a themes array (each with a label, the anchored RCGP statement and capability area, the count and identifiers of cases it appears in, an evidence summary, and a concrete development suggestion); a style_patterns array (same shape, framed as technique); a strengths array; and a prioritised next_steps list. Keep every claim grounded in the stored case data.
+Return a single JSON object using exactly these keys and spellings. Keys not listed here are discarded, and a key spelled differently is the same as a key you did not send.
+
+{
+  "window": {"from": "<ISO date of the oldest case>", "to": "<ISO date of the newest case>", "cases_included": <integer>},
+  "confidence": "low" or "medium" or "high",
+  "overall_trajectory": "improving" or "static" or "declining",
+  "overall_narrative": "<a short paragraph>",
+  "recurring_themes": [<theme>, ...],
+  "style_patterns": [<theme>, ...],
+  "consistent_strengths": [
+    {"theme_label": "<what they reliably do well>", "domain": "<domain key>", "evidence_count": <integer>}
+  ],
+  "next_steps": ["<the highest value thing to practise next>", "..."],
+  "caution": "<what this report cannot tell them, given how few cases it covers>"
+}
+
+Every entry of recurring_themes and of style_patterns is a <theme>, which is:
+
+{
+  "priority": <integer, 1 is highest>,
+  "theme_label": "<short name for the pattern>",
+  "mapped_statement": "<the anchored RCGP feedback statement>",
+  "domain": "data_gathering" or "clinical_management" or "relating_to_others",
+  "capability_area": "<the RCGP capability area>",
+  "frequency": <integer, how many cases it appears in>,
+  "max_consequence_tier": <integer 0 to 3>,
+  "trajectory": "improving" or "static" or "declining",
+  "context_pattern": "<the kind of case it clusters in, or that it is general>",
+  "evidence": [
+    {"case_id": "<a case_id from the data>", "completed_at": "<that case's date>", "quote": "<a quote from that case>"}
+  ],
+  "development_suggestion": {
+    "narrative": "<one concrete thing to practise>",
+    "source": "learning_points" or "rcgp_educator_notes" or "nice" or "sign" or "curriculum"
+  }
+}
+
+Three spellings that are easy to get wrong, so check them before you answer:
+- The name of a pattern is "theme_label". It is never "label".
+- "development_suggestion" is always the object above. It is never a bare string.
+- "evidence" is always an array of those objects. It is never a summary sentence.
+
+style_patterns uses the same shape as recurring_themes; the difference is framing, technique rather than knowledge. Keep every claim grounded in the stored case data.
 
 HOUSE RULE
 No dashes anywhere in the output. Use commas, colons, parentheses, or restructure; use "to" for ranges.
