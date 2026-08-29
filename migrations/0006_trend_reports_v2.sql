@@ -18,12 +18,14 @@ alter table trend_reports add column if not exists patterns jsonb   default '[]'
 -- 2. Trajectory vocabulary: v2 says "steady" where v1 said "static", the same
 --    judgement in the register the report is written in. Without this the check
 --    constraint rejects every v2 report.
+alter table trend_reports drop constraint if exists trend_reports_overall_trajectory_check;
+
 -- Existing v1 rows say "static"; the re-added constraint validates them, so they
--- are moved onto the v2 word first. Their content stays v1 either way, and the
--- frontend treats any non-v2 row as absent, so this rewrite is cosmetic.
+-- move onto the v2 word while no constraint is active (the old one rejects
+-- 'steady', so this update cannot run before the drop). Their content stays v1
+-- either way, and the frontend treats any non-v2 row as absent.
 update trend_reports set overall_trajectory = 'steady' where overall_trajectory = 'static';
 
-alter table trend_reports drop constraint if exists trend_reports_overall_trajectory_check;
 alter table trend_reports add  constraint trend_reports_overall_trajectory_check
     check (overall_trajectory in ('improving', 'steady', 'declining'));
 
