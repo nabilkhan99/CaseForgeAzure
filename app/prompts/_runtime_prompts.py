@@ -117,6 +117,7 @@ HARD RULES
 - Every quote you emit, in "your_quote" and in every "evidence" entry, is copied verbatim from the material above. Never paraphrase it, never tidy its grammar, never merge two moments, never invent one. An invented quote fails the whole report.
 - Every "case_id" is copied exactly as it was given to you.
 - Address the candidate as "you". Write British English.
+- The machine domain keys ("data_gathering", "clinical_management", "relating_to_others") belong only in the "domain" field. In prose, write the human names: Data gathering, Clinical management, Relating to others.
 - No bullet lists, no numbering and no line breaks inside any string.
 - "overall_narrative" is at most two sentences.
 - Every field named in the contract below is present in your answer.

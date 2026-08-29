@@ -90,6 +90,10 @@ class SessionRepository:
         """
         row = {
             "candidate_id": candidate_id,
+            # Stamped here because this is an upsert: Postgres defaults created_at
+            # on insert only, so without this a rebuilt report keeps claiming the
+            # date of the candidate's first one forever.
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "version": payload.get("version"),
             "window": payload.get("window"),
             "overall_trajectory": payload.get("overall_trajectory"),
