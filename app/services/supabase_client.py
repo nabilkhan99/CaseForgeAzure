@@ -79,22 +79,34 @@ class SessionRepository:
             "id", session_id
         ).execute()
 
-    # ── trend layer (Phase 8) ──
+    # ── trend layer (v2 contract, app/schemas/trend.py) ──
     def save_trend(self, candidate_id: str, payload: Dict[str, Any]) -> None:
+        """Write the one live trend report for this candidate.
+
+        The v1 columns are nulled rather than left alone. This is an upsert on
+        candidate_id, so a row that predates v2 would otherwise keep serving its
+        recurring_themes and its caution alongside fresh v2 patterns, and the
+        frontend would have no way to tell which half was current.
+        """
         row = {
             "candidate_id": candidate_id,
+            "version": payload.get("version"),
             "window": payload.get("window"),
-            "confidence": payload.get("confidence"),
             "overall_trajectory": payload.get("overall_trajectory"),
             "overall_narrative": payload.get("overall_narrative"),
-            "recurring_themes": payload.get("recurring_themes"),
-            "style_patterns": payload.get("style_patterns"),
-            "consistent_strengths": payload.get("consistent_strengths"),
-            "next_steps": payload.get("next_steps"),
-            "caution": payload.get("caution"),
+            "patterns": payload.get("patterns"),
+            # Retired by the v2 contract; columns kept by migration 0005 only so
+            # an in-flight frontend does not read a missing column.
+            "confidence": None,
+            "recurring_themes": [],
+            "style_patterns": [],
+            "consistent_strengths": [],
+            "next_steps": [],
+            "caution": None,
         }
         # One live report per candidate (trend_reports_candidate_unique, added in
-        # 0003): a rebuild replaces the old row instead of accumulating history.
+        # 0003): a rebuild replaces the old row instead of accumulating history,
+        # and two concurrent rebuilds converge on it rather than duplicating.
         self.client.table("trend_reports").upsert(
             row, on_conflict="candidate_id"
         ).execute()

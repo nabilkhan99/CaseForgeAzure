@@ -17,6 +17,7 @@ from app.services.marking_service import (
     model_supports_temperature,
 )
 from app.services.supabase_client import SessionRepository, get_client
+from app.services.trend_trigger import fire_trend_rebuild
 
 
 @cors_middleware
@@ -53,6 +54,13 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         result = await service.mark(session_id)
+
+        # The result row is saved; rebuild this candidate's Development page
+        # from it now rather than leaving them looking at patterns drawn from
+        # every case except the one they just sat. Fire and forget and never
+        # raises: see app/services/trend_trigger.py.
+        await fire_trend_rebuild(result.get("candidate_id"), settings)
+
         return handle_response(
             data={
                 "status": "completed",

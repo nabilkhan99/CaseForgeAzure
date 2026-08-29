@@ -1,7 +1,13 @@
 """HTTP trigger: build a cross-case trend report for one candidate.
 
 POST /api/generate-trend  body: { "candidateId": "<uuid>" }
-Guarded by the same shared secret as marking. Source: Build Package Section 13.
+Guarded by the same shared secret as marking. Produces the v2 contract
+(app/schemas/trend.py). Called by the frontend's trend route and, since the
+post-marking hook, by this app itself after every case it marks.
+
+Below MIN_CASES_FOR_PATTERNS marked cases this answers 200 with
+status "skipped", not an error: a candidate on their second case has not done
+anything wrong, and the post-marking trigger fires for them too.
 """
 import logging
 
@@ -12,7 +18,11 @@ from app.config import Settings
 from app.middleware import cors_middleware, handle_response
 from app.services.marking_service import make_azure_model_call, model_supports_temperature
 from app.services.supabase_client import SessionRepository, get_client
-from app.services.trend_service import TrendService
+from app.services.trend_service import (
+    MIN_CASES_FOR_PATTERNS,
+    InsufficientCases,
+    TrendService,
+)
 
 
 @cors_middleware
@@ -47,9 +57,25 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             repo, make_azure_model_call(openai_client, deployment, temperature=temperature)
         )
 
-        report = await service.generate(candidate_id)
+        try:
+            report = await service.generate(candidate_id)
+        except InsufficientCases as exc:
+            logging.info("Trend report skipped: %s", exc)
+            return handle_response(
+                data={
+                    "status": "skipped",
+                    "reason": "insufficient_cases",
+                    "cases_available": exc.cases_available,
+                    "cases_required": MIN_CASES_FOR_PATTERNS,
+                }
+            )
+
         return handle_response(
-            data={"status": "completed", "confidence": report.get("confidence")}
+            data={
+                "status": "completed",
+                "version": report.get("version"),
+                "patterns": len(report.get("patterns") or []),
+            }
         )
     except Exception as exc:  # noqa: BLE001
         logging.error(f"Error generating trend report: {exc}")

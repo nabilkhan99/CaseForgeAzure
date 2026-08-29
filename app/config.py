@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # Shared secret guarding the marking/trend endpoints (frontend -> Azure)
     marking_shared_secret: str = ""
 
+    # Where this Function app can reach itself, used by the post-marking trend
+    # rebuild (app/services/trend_trigger.py). Left empty in Azure, where
+    # WEBSITE_HOSTNAME is set on every instance and is used instead; set it
+    # locally (http://localhost:7071) or for a slot or custom domain.
+    self_base_url: str = ""
+
     # Application Settings
     debug: bool = False
     environment: str = "development"
