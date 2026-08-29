@@ -49,8 +49,9 @@ class TrendEvidence(BaseModel):
     """One case, and the candidate's or patient's own words from it.
 
     Both fields are copied, never composed: ``case_id`` exactly as it appeared
-    in the input, ``quote`` character for character from that case's marked
-    output. Nothing here is enforced by the type system, so the prompt states it
+    in the input (it is the case's STATION id, which is what the frontend joins
+    to for the case title), ``quote`` character for character from that case's
+    marked output. Nothing here is enforced by the type system, so the prompt states it
     as a hard rule and TrendService logs any quote it cannot find in the input.
     """
 

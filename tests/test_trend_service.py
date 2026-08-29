@@ -46,7 +46,11 @@ def _result(case_id, completed_at="2026-06-03T10:00:00Z", weighted_score=5.5):
                         "label": "Potency of topical steroid",
                         "status": "not_met",
                         "consequence_tier": 2,
-                        "evidence": {"quote": QUOTE},
+                        "evidence": {
+                            "quote": QUOTE,
+                            "speaker": "patient",
+                            "evidence_kind": "patient_cue",
+                        },
                     }
                 ],
             }
@@ -347,10 +351,15 @@ def test_slim_case_result_strips_narrative_bulk(make_fat_result):
         "is_weighted",
         "indicator_id",
         "evidence_kind",
-        "speaker",
         "timestamp_ms",
     ):
         assert dropped not in dumped, dropped
+
+    # The speaker is the one envelope field that survives, beside its quote:
+    # v2 prefers quoting the patient, and the model cannot prefer what it
+    # cannot see.
+    quoted = [m for m in domain["missed"] if m.get("quote")]
+    assert quoted and all(m.get("speaker") in ("patient", "candidate") for m in quoted)
 
     assert domain["missed"][0]["quote"].endswith("...")
     assert len(domain["missed"][0]["quote"]) <= MAX_QUOTE_CHARS + 3

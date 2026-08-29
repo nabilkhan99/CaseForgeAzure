@@ -89,9 +89,9 @@ A JSON array of marked cases, oldest first. Each case carries:
 - "session_id": the id of that particular sitting. Never cite it and never put it in "evidence"; it is there for the audit trail, not for you.
 - "case_title", "completed_at" (ISO timestamp), "verdict", "weighted_score" (0 to 10.5), "one_line_summary".
 - "capability_links", "conditional_features" (flags such as safeguarding or complexity), and "focus_areas", the priorities that case already gave them, each with a "label" and a "domain".
-- "domains": one entry per marking domain, each with "domain" (one of "data_gathering", "clinical_management", "relating_to_others"), "grade" (CP, P, F or CF), "grade_points", "weighted_points", "anchored_statements" (the RCGP feedback statement titles), "did_well" (labels only), "missed" (each with a "label", a "status", a "consequence_tier" from 0 to 3, and usually a "quote"), and "cues" (each with the "cue", a "status", and a "quote" where the cue was missed).
+- "domains": one entry per marking domain, each with "domain" (one of "data_gathering", "clinical_management", "relating_to_others"), "grade" (CP, P, F or CF), "grade_points", "weighted_points", "anchored_statements" (the RCGP feedback statement titles), "did_well" (labels only), "missed" (each with a "label", a "status", a "consequence_tier" from 0 to 3, and, where someone's actual words captured the moment, a "quote" with a "speaker"), and "cues" (each with the "cue", a "status", and a "quote" with a "speaker" where the cue was missed).
 
-Quotes exist in exactly two places: the "quote" inside a "missed" item, and the "quote" inside a "cues" item. Those are real words spoken in that consultation. Some are clipped mid sentence and end in an ellipsis; that is expected, and you copy them as they are. There is no transcript here and there are no other quotes. If a moment has no quote in the material, you cannot quote it.
+Quotes exist in exactly two places: the "quote" inside a "missed" item, and the "quote" inside a "cues" item. Every one is real words spoken aloud in that consultation, and its "speaker" tells you whose words they are: "patient" or "candidate". The examiner's commentary is never given to you as a quote. Some quotes are clipped mid sentence and end in an ellipsis; that is expected, and you copy them as they are. There is no transcript here and there are no other quotes. If a moment has no quote in the material, you cannot quote it.
 
 CHOOSING THE PATTERNS
 Choose at most three, and fewer whenever the cases honestly support fewer. One well evidenced pattern is a better report than three padded ones. Order them by the marks they cost, heaviest first.
@@ -99,7 +99,7 @@ A pattern earns its place by recurring. Weigh, in this order: how many cases it 
 "headline" names the pattern as an instruction to themselves: an imperative phrase of seven words or fewer, for example "Close with a complete plan" or "Ask what they are worried about".
 
 THEIR QUOTE
-For each pattern, choose the single most illustrative moment from the quotes described above and copy it into "your_quote" character for character. Choose the one where the habit is audible, not merely the one where the marks were lost. "quote_gloss" is one sentence saying why that particular moment shows the pattern.
+For each pattern, choose the single most illustrative moment from the quotes described above and copy it into "your_quote" character for character. Prefer the patient's words that most expose the pattern: the cue that went unanswered, the question that never got its plan. The candidate's own words are the right choice when the habit lives in what they said rather than what they missed. Either way, choose the moment where the habit is audible, not merely the one where the marks were lost. "quote_gloss" is one sentence saying why that particular moment shows the pattern.
 
 THE MODEL LINE
 This is the part of the report the candidate cannot write for themselves, so it is the part to get right.

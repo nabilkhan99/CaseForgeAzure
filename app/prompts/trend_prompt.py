@@ -23,9 +23,11 @@ from typing import Any, Dict, List, Optional, Set
 from app.prompts._runtime_prompts import TREND_PROMPT
 
 # The report is a picture of patterns across *recent* cases, so the window is
-# bounded rather than "everything ever marked". Twelve is roughly a candidate's
-# last month of practice and keeps the prompt flat as their history grows.
-MAX_TREND_CASES = 12
+# bounded rather than "everything ever marked" — one oversized request used to
+# blow the deployment's per minute token quota. Twenty (raised from twelve for
+# a more holistic read; the window grows with the candidate until it hits this)
+# keeps the prompt flat as their history grows.
+MAX_TREND_CASES = 20
 
 # Evidence quotes are kept for the items that drive themes, but clipped: the
 # pattern finder needs enough to recognise the moment, not the whole exchange.
@@ -53,11 +55,29 @@ def _compact(obj: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in obj.items() if v not in (None, "", [], {})}
 
 
-def _quote(item: Dict[str, Any]) -> Optional[str]:
+# Who may be quoted, and which marking evidence kinds are NOT spoken words.
+# The marking engine uses the quote field for two different things: real
+# transcript lines (speaker = patient or candidate, kind = patient_cue) and its
+# own descriptive stand-ins for moments with nothing to quote (not_asked,
+# no_direct_quote, or no speaker at all). Only the first kind may reach the
+# trend model: a report that "quotes" the examiner's commentary back at the
+# candidate reads as fabricated, because to the candidate it is.
+_QUOTE_SPEAKERS = ("patient", "candidate")
+_NON_SPOKEN_KINDS = ("not_asked", "no_direct_quote")
+
+
+def _spoken_quote(item: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+    """(quote, speaker) when the evidence is words someone actually said."""
     evidence = item.get("evidence") or {}
     if not isinstance(evidence, dict):
-        return None
-    return _clip(evidence.get("quote"))
+        return None, None
+    speaker = evidence.get("speaker")
+    if speaker not in _QUOTE_SPEAKERS:
+        return None, None
+    if evidence.get("evidence_kind") in _NON_SPOKEN_KINDS:
+        return None, None
+    quote = _clip(evidence.get("quote"))
+    return (quote, speaker) if quote else (None, None)
 
 
 def _slim_domain(domain: Dict[str, Any]) -> Dict[str, Any]:
@@ -73,7 +93,9 @@ def _slim_domain(domain: Dict[str, Any]) -> Dict[str, Any]:
     their feedback report, and the single largest field here), ``how_to_improve``
     / ``grade_mover`` / ``model_moment`` (per case coaching the trend report
     replaces with its own suggestions), the evidence envelope around the quote
-    (``speaker``, ``timestamp_ms``, ``evidence_kind``), quotes on the strengths
+    (``timestamp_ms``, ``evidence_kind`` — ``speaker`` is kept, and quotes that
+    are not actually spoken words are dropped, see ``_spoken_quote``), quotes on
+    the strengths
     and on explored cues, and derived display fields (``display_name``,
     ``max_points``, ``is_weighted``).
     """
@@ -81,13 +103,15 @@ def _slim_domain(domain: Dict[str, Any]) -> Dict[str, Any]:
     for item in domain.get("what_you_missed") or []:
         if not isinstance(item, dict):
             continue
+        quote, speaker = _spoken_quote(item)
         missed.append(
             _compact(
                 {
                     "label": item.get("label"),
                     "status": item.get("status"),
                     "consequence_tier": item.get("consequence_tier"),
-                    "quote": _quote(item),
+                    "quote": quote,
+                    "speaker": speaker,
                 }
             )
         )
@@ -97,13 +121,15 @@ def _slim_domain(domain: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(item, dict):
             continue
         status = item.get("status")
+        quote, speaker = _spoken_quote(item) if status == "missed" else (None, None)
         cues.append(
             _compact(
                 {
                     "cue": item.get("cue"),
                     "status": status,
                     # Only a missed cue needs grounding; an explored one is a tick.
-                    "quote": _quote(item) if status == "missed" else None,
+                    "quote": quote,
+                    "speaker": speaker,
                 }
             )
         )
