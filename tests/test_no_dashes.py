@@ -4,7 +4,7 @@ Source: Build Package Section 9.3 and the README house rule. No dashes anywhere
 in generated output. Numeric ranges use the word "to"; everything else uses
 commas, spaces, or restructuring. Covers hyphen-minus, en dash, and em dash.
 """
-from app.utils.no_dashes import enforce_no_dashes, find_dashes, DASH_CHARS
+from app.utils.no_dashes import clean_prose, enforce_no_dashes, find_dashes, DASH_CHARS
 
 
 def test_numeric_range_becomes_to():
@@ -50,6 +50,30 @@ def test_no_dash_chars_remain_after_enforce():
     messy = "a-b – c—d 1-2"
     out = enforce_no_dashes(messy)
     assert not any(d in out for d in DASH_CHARS)
+
+
+def test_clean_prose_is_the_single_string_entry_point():
+    assert clean_prose("review in 2-3 weeks") == "review in 2 to 3 weeks"
+
+
+def test_clean_prose_passes_non_strings_through():
+    """So a caller walking a payload can name a field without type checking it."""
+    for value in (None, 5, 5.5, True, ["a-b"], {"k": "a-b"}):
+        assert clean_prose(value) is value
+
+
+def test_enforce_no_dashes_cannot_tell_an_identifier_from_prose():
+    """Pinning the reason the trend path does not use it.
+
+    This is not a bug in enforce_no_dashes, it is its contract: every string is
+    prose. Anything holding UUIDs, dates, or verbatim quotes needs a walk that
+    knows which fields are which, e.g. trend_service.enforce_trend_no_dashes.
+    """
+    mangled = enforce_no_dashes(
+        {"candidate_id": "56454120-2d2c-4b1a-9f3e-5f0a3b1c7d99", "date": "2026-06-17"}
+    )
+    assert mangled["candidate_id"] != "56454120-2d2c-4b1a-9f3e-5f0a3b1c7d99"
+    assert mangled["date"] == "2026 to 06 to 17"
 
 
 def test_find_dashes_reports_paths():

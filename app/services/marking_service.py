@@ -381,6 +381,12 @@ class MarkingService:
         fb.overall.tier3_override_applied = verdict["tier3_override_applied"]
 
         payload = enforce_no_dashes(fb.model_dump())
+        # Stamped from the session row, and stamped *after* the no-dash pass:
+        # that pass rewrites every string in the payload, and a UUID with its
+        # hyphens rewritten is not a UUID. The post-marking trend rebuild reads
+        # this to know whose report to build, so it has to be the real id, and
+        # the session row is a better source for it than the model's echo.
+        payload["candidate_id"] = session.get("user_id")
         # Persist which conditional features were in play, for the trend layer and audit
         # (Build Package action item 11). Not part of the candidate-facing schema.
         payload["conditional_features"] = case_pack.get("conditional_features")

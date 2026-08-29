@@ -14,6 +14,11 @@ Apply order:
 2. `0002_sca_stations_indicators.sql`      (structured indicators + flags on stations)
 3. `0003_sca_trend_reports.sql`            (trend layer table)
 4. `0004_clinical_sessions_error_status.sql` (add 'error' to the status check)
+5. `0005_concurrency_claims.sql`           (marking/trend build claims + the unique
+   candidate_id constraint the trend upsert needs — applied to prod 26 Aug 2026)
+6. `0006_trend_reports_v2.sql`              (trend contract v2: patterns + version,
+   the "steady" trajectory value; recreates the unique candidate_id index where
+   0005 was never applied)
 
 Apply via the Supabase SQL editor or `supabase db push`. Review `session_results_legacy`
 is populated before dropping it manually later.

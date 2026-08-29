@@ -5,9 +5,17 @@ rule. No dashes anywhere in generated output: numeric ranges become "to", and
 every other dash becomes a comma or a space. Covers hyphen-minus, en dash, em
 dash, figure dash, horizontal bar, and the unicode minus sign.
 
-`enforce_no_dashes` rewrites a value (str, or nested dict/list of strings) and
-guarantees no dash character survives. `find_dashes` reports offending paths for
-logging or assertions before persisting.
+Three entry points, and choosing the right one matters:
+
+- `clean_prose` rewrites one string. Reach for this when the caller knows which
+  fields hold prose the model wrote.
+- `enforce_no_dashes` rewrites every string in a nested structure. It cannot
+  tell prose from a UUID, an ISO date, or a verbatim quote, and it rewrites all
+  three ("56454120 to 2d2c...", "2026 to 06 to 17"). Only use it where the whole
+  payload is prose. The trend path does not: see
+  app/services/trend_service.enforce_trend_no_dashes for the schema-aware walk.
+- `find_dashes` reports offending paths for logging or assertions before
+  persisting.
 """
 from __future__ import annotations
 
@@ -22,6 +30,15 @@ _NUMERIC_RANGE = re.compile(rf"(?<=\d)\s*[{_DASH_CLASS}]+\s*(?=\d)")
 _WORD_COMPOUND = re.compile(rf"(?<=\w)[{_DASH_CLASS}](?=\w)")
 _REMAINING = re.compile(rf"\s*[{_DASH_CLASS}]+\s*")
 _ANY_DASH = re.compile(rf"[{_DASH_CLASS}]")
+
+
+def clean_prose(s: Any) -> Any:
+    """Apply the house rule to one string of generated prose.
+
+    Anything that is not a string is returned untouched, so a caller walking a
+    payload can name a field without first checking its type.
+    """
+    return _clean_str(s) if isinstance(s, str) else s
 
 
 def _clean_str(s: str) -> str:
