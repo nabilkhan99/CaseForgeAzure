@@ -5,11 +5,16 @@ from openai import AsyncOpenAI, AsyncAzureOpenAI
 import asyncio
 import logging
 from ..config import Settings, capability_content
-from ..utils.text_processing import extract_sections, generate_title
+from ..utils.text_processing import (
+    extract_sections,
+    find_name_title_patterns,
+    generate_title,
+    strip_age_hyphens,
+)
 from ..utils.capabilities import parse_capabilities, format_capabilities
 from ..models import CaseReviewResponse, CaseReviewSection
 from .portfolio_audit import PortfolioOutputAuditLogger
-from .portfolio_prompts import build_playground_system_prompt
+from .portfolio_prompts import build_playground_system_prompt, with_portfolio_privacy_rules
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +32,29 @@ class PortfolioService:
             enabled=settings.portfolio_output_audit_enabled,
         )
 
+    def _flag_name_patterns(self, operation: str, output_text: str) -> None:
+        """Log any "title + capitalised word" fragment left in generated output.
+
+        Build spec section 8b's recommended safeguard. Log only: the text is
+        never rewritten, because a false positive would corrupt a real review
+        that a trainee is about to submit. The fragments are safe to log here
+        because this same output is already written verbatim to the portfolio
+        output audit row.
+        """
+        try:
+            hits = find_name_title_patterns(output_text)
+        except Exception as exc:
+            logger.warning("Name pattern check failed for %s: %s", operation, exc)
+            return
+
+        if hits:
+            logger.warning(
+                "Portfolio output flagged for review (%s): %d possible personal name(s): %s",
+                operation,
+                len(hits),
+                "; ".join(hits),
+            )
+
     def _record_portfolio_output(
         self,
         *,
@@ -35,6 +63,8 @@ class PortfolioService:
         output_text: str,
         output_payload: Optional[Any] = None,
     ) -> None:
+        self._flag_name_patterns(operation, output_text)
+
         if hasattr(output_payload, "model_dump"):
             output_payload = output_payload.model_dump()
 
@@ -69,6 +99,8 @@ class PortfolioService:
             system_prompt = system_prompt_override or self.settings.SYSTEM_PROMPT
             if enforce_output_contract:
                 system_prompt = build_playground_system_prompt(system_prompt)
+            # Appended last, so a playground prompt override cannot drop it.
+            system_prompt = with_portfolio_privacy_rules(system_prompt)
             messages = [
                 {
                     "role": "system",
@@ -113,7 +145,7 @@ Selected Capabilities:
             print(f"{'='*80}")
             print(review_content)
             print(f"{'='*80}\n")
-            review_content = review_content.replace('*', '').replace('#', '')
+            review_content = strip_age_hyphens(review_content.replace('*', '').replace('#', ''))
             print(f"   ⏱️  Step 4 took {time.time() - step_start:.2f}s")
 
             print("🔵 Step 5: Extracting sections...")
@@ -125,7 +157,9 @@ Selected Capabilities:
             
             print("🔵 Step 6: Generating title...")
             step_start = time.time()
-            case_title = await generate_title(sections["brief_description"], self.openai_client, self.settings)
+            case_title = strip_age_hyphens(
+                await generate_title(sections["brief_description"], self.openai_client, self.settings)
+            )
             print(f"🔵 Step 6a: Title generated: '{case_title}'")
             print(f"   ⏱️  Step 6 took {time.time() - step_start:.2f}s")
 
@@ -220,12 +254,10 @@ Selected Capabilities:
         try:
             formatted_capabilities = format_capabilities(selected_capabilities)
             
-            messages = [
-                {
-                    "role": "system",
-                    "content": """You are an AI assistant helping to improve GP portfolio entries.
+            improve_system_prompt = with_portfolio_privacy_rules(
+                """You are an AI assistant helping to improve GP portfolio entries.
                     Your task is to enhance specific aspects of case reviews while maintaining the overall structure and other content.
-                    
+
                     Guidelines:
                     1. Only modify content specifically related to the requested improvement
                     2. Maintain the same level of professionalism and medical accuracy
@@ -233,6 +265,12 @@ Selected Capabilities:
                     4. Ensure improvements are specific and evidence-based
                     5. Preserve any existing good content not related to the improvement request
                     6. For demographic corrections, ensure all pronouns and references are updated consistently throughout"""
+            )
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": improve_system_prompt
                 },
                 {
                     "role": "user",
@@ -304,7 +342,7 @@ Selected Capabilities:
             )
 
             improved_content = response.choices[0].message.content
-            improved_content = improved_content.replace('*', '').replace('#', '')
+            improved_content = strip_age_hyphens(improved_content.replace('*', '').replace('#', ''))
 
             sections = extract_sections(improved_content, selected_capabilities)
             
@@ -312,6 +350,7 @@ Selected Capabilities:
                 case_title = await generate_title(sections["brief_description"], self.openai_client, self.settings)
             else:
                 case_title = await generate_title(original_case.split("\n")[0], self.openai_client, self.settings)
+            case_title = strip_age_hyphens(case_title)
 
             response_payload = CaseReviewResponse(
                 case_title=case_title,
@@ -367,6 +406,10 @@ Selected Capabilities:
                 system_prompt += "\nFor reflections: Include both clinical and emotional aspects, what went well, and areas for improvement."
             elif section_type == "learning_needs":
                 system_prompt += "\nFor learning needs: Be specific about knowledge gaps and actionable learning objectives."
+
+            # Same privacy and age rules as the two generation paths: an improve
+            # call must not be able to reintroduce a name that generation stripped.
+            system_prompt = with_portfolio_privacy_rules(system_prompt)
             
             user_content = f"""
             Section type: {section_type}"""
@@ -417,7 +460,7 @@ Selected Capabilities:
             )
             
             improved_content = completion.choices[0].message.content
-            improved_content = improved_content.strip()
+            improved_content = strip_age_hyphens(improved_content.strip())
             self._record_portfolio_output(
                 operation="improve_section",
                 request_payload={

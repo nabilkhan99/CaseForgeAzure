@@ -112,3 +112,98 @@ async def generate_title(case_description: str, client: AsyncAzureOpenAI, settin
     except Exception as e:
         print(f"❌ generate_title: Error - {str(e)}, returning default")
         return "Case Review"
+
+# ---------------------------------------------------------------------------
+# Post-generation output cleanup (build spec section 8)
+#
+# Two narrow helpers applied to every string the Portfolio model writes back to
+# the trainee. Both are deliberately conservative: this text is pasted straight
+# into an RCGP ePortfolio, so a false positive that corrupts a real review is
+# worse than a miss that a human still has to catch.
+#
+# Do NOT reach for app.utils.no_dashes.enforce_no_dashes here. It strips every
+# intra-word hyphen, so "co-amoxiclav" becomes "co amoxiclav", which the
+# Portfolio prompt explicitly calls a clinical error.
+# ---------------------------------------------------------------------------
+
+# Spec 8a: /(\d+)-(year|month|week|day)-old/gi -> "$1 $2 old".
+# Anchored on both hyphens and on the literal word "old", so it can only fire on
+# an age construction. Ordinary and clinical hyphens are structurally unreachable.
+_AGE_HYPHEN_RE = re.compile(r"(\d+)-(year|month|week|day)-(old)", re.IGNORECASE)
+
+# Spec 8b safeguard: a title followed by a capitalised word reads as a personal
+# name. Detection only, never rewriting.
+_NAME_TITLES = ("Dr", "Mr", "Mrs", "Ms", "Miss", "Prof", "Professor", "Sister", "Nurse")
+
+_TITLE_NAME_RE = re.compile(
+    r"\b(?:" + "|".join(_NAME_TITLES) + r")\.?\s+[A-Z][A-Za-z'’-]+"
+)
+
+# Capitalised words that follow a title as part of a role, not as a surname.
+# Keeps the flag useful: a warning nobody trusts gets ignored.
+_ROLE_WORDS_AFTER_TITLE = frozenset(
+    {
+        "Practitioner",
+        "Practitioners",
+        "Specialist",
+        "Specialists",
+        "Prescriber",
+        "Consultant",
+        "Manager",
+        "Lead",
+        "Led",
+        "Team",
+        "Practice",
+        "Colleague",
+        "Colleagues",
+        "In",
+        "On",
+        "Of",
+        "And",
+    }
+)
+
+
+def strip_age_hyphens(text: str) -> str:
+    """Rewrite hyphenated ages as spaced ages, per build spec section 8a.
+
+    "a 42-year-old man" -> "a 42 year old man". Years, months, weeks and days,
+    any casing. The casing of the matched words is preserved, so "6-Week-Old"
+    becomes "6 Week Old" rather than being silently lower-cased.
+
+    Nothing else is touched: "co-amoxiclav", "self-employed" and "follow-up"
+    come back unchanged, because the pattern requires a leading numeral, an age
+    word, and the trailing word "old".
+    """
+    if not isinstance(text, str):
+        raise TypeError(f"strip_age_hyphens expects str, got {type(text).__name__}")
+    return _AGE_HYPHEN_RE.sub(lambda m: f"{m.group(1)} {m.group(2)} {m.group(3)}", text)
+
+
+def find_name_title_patterns(text: str) -> List[str]:
+    """Return the "title + capitalised word" fragments that read as personal names.
+
+    The build spec's recommended safeguard for section 8b: flag output such as
+    "Dr O'Rourke" or "Sister Amara" for human review. Purely a detector. It
+    never rewrites the text, because a false positive here would corrupt a real
+    review, and role phrases ("Nurse Practitioner") are filtered out so the
+    signal stays worth acting on.
+
+    Returns the matched fragments in order of first appearance, de-duplicated.
+    An empty list means nothing was flagged.
+    """
+    if not isinstance(text, str):
+        raise TypeError(f"find_name_title_patterns expects str, got {type(text).__name__}")
+
+    hits: List[str] = []
+    seen = set()
+    for match in _TITLE_NAME_RE.finditer(text):
+        fragment = match.group(0)
+        following = fragment.split()[-1]
+        if following in _ROLE_WORDS_AFTER_TITLE:
+            continue
+        if fragment in seen:
+            continue
+        seen.add(fragment)
+        hits.append(fragment)
+    return hits
