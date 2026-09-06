@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from app.prompts.marking_prompt import build_marking_messages
@@ -68,6 +70,165 @@ def model_supports_temperature(deployment: str) -> bool:
     if "gpt-5" in name:
         return False
     return True
+
+
+# ── unmarkable transcripts ───────────────────────────────────────────────────
+# A consultation that never really happened must not be graded. Seven
+# session_results rows sit on transcripts of two turns or fewer, and one
+# single-turn transcript came back "Fail 3.5" with detailed commentary on a
+# consultation the candidate had not had. Below either threshold the model is
+# never called, no result row is written, and the session is parked as
+# 'unmarkable' (migration 0007) with its marking claim released. Trial
+# consumption is counted from session_results rows, so such a sitting is free.
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name) or default)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name) or default)
+    except ValueError:
+        return default
+
+
+MIN_CANDIDATE_TURNS = _env_int("MIN_CANDIDATE_TURNS", 6)
+MIN_CANDIDATE_SECONDS = _env_float("MIN_CANDIDATE_SECONDS", 90.0)
+
+
+class UnmarkableTranscript(Exception):
+    """Raised instead of marking when the transcript is too thin to grade.
+
+    Carries the measurements so the HTTP layer can return the agreed contract
+    body (status 200, ``{"status": "unmarkable", ...}``) rather than an error
+    the frontend would have to guess at.
+    """
+
+    def __init__(
+        self,
+        candidate_turns: int,
+        candidate_seconds: float,
+        reason: str = "too_short",
+    ):
+        self.candidate_turns = candidate_turns
+        self.candidate_seconds = candidate_seconds
+        self.reason = reason
+        super().__init__(
+            f"transcript too thin to mark: {candidate_turns} candidate turns over "
+            f"{candidate_seconds:.1f}s"
+        )
+
+    def to_response(self) -> Dict[str, Any]:
+        return {
+            "status": "unmarkable",
+            "candidate_turns": self.candidate_turns,
+            "candidate_seconds": self.candidate_seconds,
+            "reason": self.reason,
+        }
+
+
+def _is_candidate_turn(turn: Any) -> bool:
+    """True for a turn the marker would render as "Candidate:" with words in it.
+
+    Mirrors format_transcript (app/prompts/marking_prompt.py): the spec shape
+    labels by ``speaker``, the legacy shape by ``role``, and a turn with no text
+    is dropped before the model ever sees it, so it cannot count as evidence
+    that the candidate spoke.
+    """
+    if not isinstance(turn, dict):
+        return False
+    speaker = turn.get("speaker")
+    if speaker is not None:
+        is_candidate = speaker == "candidate"
+    else:
+        is_candidate = turn.get("role") == "user"
+    if not is_candidate:
+        return False
+    return bool(str(turn.get("text") or turn.get("content") or "").strip())
+
+
+def _as_ms(value: Any) -> Optional[float]:
+    """A millisecond offset as a float, or None when the field is absent or junk."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _as_epoch_seconds(value: Any) -> Optional[float]:
+    """Parse the legacy shape's ISO 8601 ``timestamp`` to epoch seconds."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def _span(values: List[float]) -> Optional[float]:
+    return max(values) - min(values) if len(values) >= 2 else None
+
+
+def _candidate_span_seconds(turns: List[Dict[str, Any]]) -> Optional[float]:
+    """Seconds from the first candidate turn to the last, or None if untimed.
+
+    Live turns carry two independent clocks: the spec shape's millisecond
+    offsets from the start of the session, and the legacy shape's absolute ISO
+    wall clock. They are measured separately and never mixed, because a span
+    taken across both is a number with no meaning.
+
+    Where both survive we take the longer. The offsets come from realtime VAD
+    events and go missing on individual turns, so a mostly untimed twelve minute
+    consultation can show two adjacent offsets and look like ten seconds; the
+    ISO stamp is written on every turn. Reading the more generous clock means a
+    thin clock can never fabricate a short consultation, and neither clock can
+    overstate one.
+    """
+    offsets_ms = [
+        ms
+        for turn in turns
+        for ms in (_as_ms(turn.get("start_ms")), _as_ms(turn.get("end_ms")))
+        if ms is not None
+    ]
+    stamps_s = [
+        s
+        for s in (_as_epoch_seconds(turn.get("timestamp")) for turn in turns)
+        if s is not None
+    ]
+    offset_span = _span(offsets_ms)
+    candidates = [s for s in (
+        offset_span / 1000.0 if offset_span is not None else None,
+        _span(stamps_s),
+    ) if s is not None]
+    return max(candidates) if candidates else None
+
+
+def evaluate_transcript(transcript: Any) -> Dict[str, Any]:
+    """Measure a transcript against the unmarkable thresholds.
+
+    Returns the two numbers the HTTP contract reports plus whether marking
+    should be refused. A transcript with no usable clock is judged on turn count
+    alone: older rows carry no timings, and failing them for that would be a
+    regression dressed up as a guard.
+    """
+    turns = [turn for turn in (transcript or []) if _is_candidate_turn(turn)]
+    seconds = _candidate_span_seconds(turns)
+    too_few = len(turns) < MIN_CANDIDATE_TURNS
+    too_short = seconds is not None and seconds < MIN_CANDIDATE_SECONDS
+    return {
+        "candidate_turns": len(turns),
+        "candidate_seconds": round(seconds, 1) if seconds is not None else 0.0,
+        "unmarkable": too_few or too_short,
+    }
 
 
 DOMAIN_DISPLAY = {
@@ -338,6 +499,27 @@ class MarkingService:
         session = self.repo.get_session(session_id)
         if not session:
             raise ValueError(f"session not found: {session_id}")
+
+        # Before anything costs money: is there a consultation here at all?
+        measure = evaluate_transcript(session.get("transcript"))
+        if measure["unmarkable"]:
+            logger.warning(
+                "marking.unmarkable session_id=%s candidate_turns=%d "
+                "candidate_seconds=%.1f min_turns=%d min_seconds=%.1f reason=too_short",
+                session_id,
+                measure["candidate_turns"],
+                measure["candidate_seconds"],
+                MIN_CANDIDATE_TURNS,
+                MIN_CANDIDATE_SECONDS,
+            )
+            # Park the session and release the marking claim, so a proper re-run
+            # of the same case can take a fresh claim without waiting out the
+            # ten minute stale TTL in the frontend's generate-feedback route.
+            self.repo.mark_unmarkable(session_id)
+            raise UnmarkableTranscript(
+                candidate_turns=measure["candidate_turns"],
+                candidate_seconds=measure["candidate_seconds"],
+            )
 
         station = self.repo.get_station(session.get("station_id"))
         if not station:

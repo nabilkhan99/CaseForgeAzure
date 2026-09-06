@@ -79,6 +79,20 @@ class SessionRepository:
             "id", session_id
         ).execute()
 
+    def mark_unmarkable(self, session_id: str) -> None:
+        """Park a session too thin to grade, and release its marking claim.
+
+        'unmarkable' is not 'error': nothing failed, there was simply no
+        consultation to mark (migration 0007). Clearing marking_started_at frees
+        the claim immediately, so a candidate who runs the case properly is
+        marked at once rather than after the ten minute stale claim TTL. No
+        session_results row is written, which is also what keeps the sitting off
+        the candidate's trial allowance.
+        """
+        self.client.table("clinical_sessions").update(
+            {"status": "unmarkable", "marking_started_at": None}
+        ).eq("id", session_id).execute()
+
     # ── trend layer (v2 contract, app/schemas/trend.py) ──
     def save_trend(self, candidate_id: str, payload: Dict[str, Any]) -> None:
         """Write the one live trend report for this candidate.
