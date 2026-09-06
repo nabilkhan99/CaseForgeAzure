@@ -19,6 +19,8 @@ Apply order:
 6. `0006_trend_reports_v2.sql`              (trend contract v2: patterns + version,
    the "steady" trajectory value; recreates the unique candidate_id index where
    0005 was never applied)
+7. `0007_clinical_sessions_unmarkable_status.sql` (add 'unmarkable' to the status
+   check, for a consultation the pre-marking guard refuses to grade)
 
 Apply via the Supabase SQL editor or `supabase db push`. Review `session_results_legacy`
 is populated before dropping it manually later.
