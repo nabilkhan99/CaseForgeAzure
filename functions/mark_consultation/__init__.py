@@ -13,6 +13,7 @@ from app.config import Settings
 from app.middleware import cors_middleware, handle_response
 from app.services.marking_service import (
     MarkingService,
+    UnmarkableTranscript,
     make_azure_model_call,
     model_supports_temperature,
 )
@@ -68,6 +69,19 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 "weighted_score": result["overall"]["weighted_score"],
             }
         )
+    except UnmarkableTranscript as unmarkable:
+        # Not a failure: there was no consultation to grade. 200 with the agreed
+        # body so the frontend can show "that was N seconds, run it properly"
+        # instead of a marking error. The session is already parked as
+        # 'unmarkable' with its claim released, and no result row exists, so the
+        # sitting costs the candidate nothing.
+        logging.info(
+            "Session %s is unmarkable: %d candidate turns over %.1fs.",
+            session_id,
+            unmarkable.candidate_turns,
+            unmarkable.candidate_seconds,
+        )
+        return handle_response(data=unmarkable.to_response())
     except Exception as exc:  # noqa: BLE001 - surface a clean 500 to the caller
         logging.error(f"Error marking consultation: {exc}")
         return handle_response(error=str(exc), status_code=500)

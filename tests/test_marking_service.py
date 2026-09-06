@@ -4,13 +4,21 @@ Verifies the parts the spec cares about: the verdict is recomputed server side
 from the domain grades (the model's own arithmetic is never trusted), a Tier 3
 missed item caps the case at Fail, dashes are stripped before persistence, and a
 single malformed model response is retried.
+
+Also covers the pre-marking guard: a transcript too thin to grade is refused
+before the model is called, parked as 'unmarkable', and reported to the frontend
+as HTTP 200 with the agreed body rather than as a mark the candidate did not earn.
 """
 import json
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.services.marking_service import (
     MarkingService,
+    UnmarkableTranscript,
     build_case_pack,
+    evaluate_transcript,
     normalize_feedback,
     parse_model_json,
 )
@@ -29,15 +37,61 @@ STATION = {
     "conditional_features": {"safeguarding": False, "consent_capacity": False, "complexity": False, "third_party": False},
 }
 
+EPOCH = datetime(2026, 9, 6, 10, 0, 0, tzinfo=timezone.utc)
+
+
+def _turn(speaker, text, at_ms, *, legacy=False, timed=True):
+    """One transcript turn in either shape the pipeline has ever written.
+
+    ``legacy`` is the pre gpt-realtime {role, content, timestamp} shape, whose
+    clock is an absolute ISO wall clock rather than an offset from the start of
+    the session. ``timed=False`` drops the clock entirely, as the oldest rows do.
+    """
+    if legacy:
+        stamp = EPOCH + timedelta(milliseconds=at_ms)
+        return {
+            "role": "user" if speaker == "candidate" else "assistant",
+            "content": text,
+            "timestamp": stamp.isoformat().replace("+00:00", "Z"),
+        }
+    turn = {"speaker": speaker, "text": text}
+    if timed:
+        turn["start_ms"] = at_ms
+    return turn
+
+
+def _transcript(candidate_turns, seconds, *, legacy=False, timed=True):
+    """A plausible alternating consultation of N candidate turns over `seconds`.
+
+    The span is exact and is measured the way the guard measures it, from the
+    first candidate turn to the last, so a test can ask for the duration it means.
+    """
+    total_ms = int(seconds * 1000)
+    base_ms = 4000
+    turns = []
+    for i in range(candidate_turns):
+        at = base_ms + (
+            round(i * total_ms / (candidate_turns - 1)) if candidate_turns > 1 else 0
+        )
+        turns.append(
+            _turn("candidate", f"Question {i + 1}. Tell me more about that.", at,
+                  legacy=legacy, timed=timed)
+        )
+        turns.append(
+            _turn("patient", f"Answer {i + 1}. It has been going on a while.", at + 1000,
+                  legacy=legacy, timed=timed)
+        )
+    return turns
+
+
 SESSION = {
     "id": "sess_1",
     "user_id": "cand_1",
     "station_id": "derm_sophie_miller",
     "status": "processing",
-    "transcript": [
-        {"speaker": "candidate", "start_ms": 4000, "text": "Hello Sophie, tell me what is going on."},
-        {"speaker": "patient", "start_ms": 18000, "text": "My hands are cracking and painful."},
-    ],
+    # A real sitting: ten candidate turns across roughly twelve minutes, well
+    # clear of the unmarkable guard.
+    "transcript": _transcript(candidate_turns=10, seconds=700),
 }
 
 
@@ -88,6 +142,7 @@ class FakeRepo:
         self.saved = None
         self.completed = None
         self.errored = None
+        self.unmarkable = None
 
     def get_session(self, session_id):
         return self._session if self._session and self._session["id"] == session_id else None
@@ -103,6 +158,9 @@ class FakeRepo:
 
     def mark_errored(self, session_id):
         self.errored = session_id
+
+    def mark_unmarkable(self, session_id):
+        self.unmarkable = session_id
 
 
 def _stub_model(*responses):
